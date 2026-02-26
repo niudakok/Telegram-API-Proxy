@@ -459,7 +459,7 @@ function handleCorsPreflightRequest() {
 async function handleAdminApiRequest(request, pathname) {
     const auth = request.headers.get('Authorization');
     const pwd = typeof ADMIN_PASSWORD !== 'undefined' ? ADMIN_PASSWORD : null;
-    if (!pwd || auth !== `Bearer ${pwd}`) return new Response('Unauthorized', { status: 401 });
+    if (!pwd || auth !== `Bearer ${pwd}`) return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), { status: 401 });
 
     if (request.method === 'GET' && pathname === '/api/admin/tokens') {
         const t = typeof ALLOWED_BOT_TOKENS !== 'undefined' ? ALLOWED_BOT_TOKENS : '';
@@ -467,9 +467,16 @@ async function handleAdminApiRequest(request, pathname) {
     }
 
     if (request.method === 'POST' && pathname === '/api/admin/tokens') {
-        const { tokens } = await request.json();
-        const ok = await updateCloudflareEnv('ALLOWED_BOT_TOKENS', tokens);
-        return new Response(JSON.stringify({ success: ok }));
+        try {
+            const { tokens } = await request.json();
+            const result = await updateCloudflareEnv('ALLOWED_BOT_TOKENS', tokens);
+            return new Response(JSON.stringify(result), {
+                status: result.success ? 200 : 400,
+                headers: { 'content-type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
+        }
     }
     return new Response('Not Found', { status: 404 });
 }
@@ -478,30 +485,56 @@ async function updateCloudflareEnv(key, value) {
     const accId = typeof CF_ACCOUNT_ID !== 'undefined' ? CF_ACCOUNT_ID : null;
     const scName = typeof CF_SCRIPT_NAME !== 'undefined' ? CF_SCRIPT_NAME : null;
     const apiTok = typeof CF_API_TOKEN !== 'undefined' ? CF_API_TOKEN : null;
-    if (!accId || !scName || !apiTok) return false;
+
+    if (!accId || !scName || !apiTok) {
+        return { success: false, error: '缺少必要的 CF 环境变量：CF_ACCOUNT_ID, CF_SCRIPT_NAME 或 CF_API_TOKEN' };
+    }
 
     try {
+        // 先获取当前所有绑定，以保持完整性
         const getUrl = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}`;
         const res = await fetch(getUrl, { headers: { 'Authorization': `Bearer ${apiTok}` } });
         const data = await res.json();
-        if (!data.success) return false;
+
+        if (!data.success) {
+            const err = data.errors?.[0]?.message || '获取 Worker 配置失败';
+            return { success: false, error: `CF API 错误: ${err}` };
+        }
 
         let bindings = data.result.bindings || [];
         let found = false;
         for (let b of bindings) {
-            if (b.name === key) { b.text = value; found = true; break; }
+            if (b.name === key) {
+                b.text = value;
+                found = true;
+                break;
+            }
         }
-        if (!found) bindings.push({ type: 'plain_text', name: key, text: value });
+        if (!found) {
+            bindings.push({ type: 'plain_text', name: key, text: value });
+        }
 
+        // 使用 PUT bindings 接口更新
         const putUrl = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}/bindings`;
         const putRes = await fetch(putUrl, {
             method: 'PUT',
-            headers: { 'Authorization': `Bearer ${apiTok}`, 'Content-Type': 'application/json' },
+            headers: {
+                'Authorization': `Bearer ${apiTok}`,
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify(bindings)
         });
+
         const putData = await putRes.json();
-        return putData.success;
-    } catch (e) { return false; }
+        if (putData.success) {
+            return { success: true };
+        } else {
+            const err = putData.errors?.[0]?.message || '更新失败';
+            return { success: false, error: `CF API 更新错误: ${err}` };
+        }
+    } catch (e) {
+        return { success: false, error: `系统异常: ${e.message}` };
+    }
 }
 
 const ADMIN_HTML = `
@@ -555,13 +588,22 @@ const ADMIN_HTML = `
         async function save() {
             const p = document.getElementById('pw').value;
             const t = document.getElementById('tk').value;
-            const res = await fetch('/api/admin/tokens', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer '+p, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tokens: t })
-            });
-            if (res.ok) show('保存成功！环境变量已更新，新请求将应用。', false);
-            else show('保存失败，请检查 API 配置', true);
+            show('正在保存...', false);
+            try {
+                const res = await fetch('/api/admin/tokens', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer '+p, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tokens: t })
+                });
+                const d = await res.json();
+                if (res.ok && d.success) {
+                    show('保存成功！环境变量已更新，新请求约几秒后生效。', false);
+                } else {
+                    show('保存失败: ' + (d.error || '原因未知'), true);
+                }
+            } catch (e) {
+                show('系统错误: ' + e.message, true);
+            }
         }
     </script>
 </body>
