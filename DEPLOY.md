@@ -79,9 +79,20 @@ https://你的项目名.pages.dev/api/bot
 
 返回 Worker 详情页 → **Settings** → **Variables** → **Environment Variables** → **Add variable**
 
-| 变量名 | 值 |
-|--------|-----|
-| `ALLOWED_BOT_TOKENS` | `你的Bot Token（逗号分隔多个）` |
+你可以直接配置固定白名单：
+| 变量名 | 值 | 说明 |
+|--------|-----|-----|
+| `ALLOWED_BOT_TOKENS` | `你的Bot Token` | 多个 Token 用英文逗号分隔 |
+
+**（可选）启用网页版管理后台（无需 KV）**
+如果您想要随时通过网页修改 Token，不用每次进 Cloudflare 控制台，请额外配置以下 4 个环境变量：
+
+| 变量名 | 值 | 说明 |
+|--------|-----|-----|
+| `ADMIN_PASSWORD` | 自定义密码 | 登录管理后台用的密码 |
+| `CF_ACCOUNT_ID` | `1234abcd...` | 你的 CF 账号 ID（在域名 Overview 右下角）|
+| `CF_SCRIPT_NAME` | `telegram-api-proxy` | 你创建的这个 Worker 的名字 |
+| `CF_API_TOKEN` | `xxxx` | CF API Token（在 My Profile → API Tokens 创建，需包含 Edit Workers Scripts 权限）|
 
 点击 **Save**。
 
@@ -90,6 +101,11 @@ https://你的项目名.pages.dev/api/bot
 你的代理地址为：
 ```
 https://你的worker名.你的用户名.workers.dev/bot
+```
+
+**管理后台地址（如已配置可选环境变量）：**
+```
+https://你的worker名.你的用户名.workers.dev/admin
 ```
 
 > ⚠️ 注意：Workers 方式的路径前缀是 `/bot`，Pages 方式是 `/api/bot`

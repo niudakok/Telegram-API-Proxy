@@ -482,6 +482,19 @@ async function handleRequest(request) {
         return handleRootRequest(request);
     }
 
+    // 管理后台页面
+    if (pathname === '/admin') {
+        return new Response(ADMIN_HTML, {
+            status: 200,
+            headers: { 'content-type': 'text/html;charset=UTF-8' }
+        });
+    }
+
+    // 管理 API 路由
+    if (pathname.startsWith('/api/admin/')) {
+        return handleAdminApiRequest(request, pathname);
+    }
+
     if (request.method === 'OPTIONS') {
         return handleCorsPreflightRequest();
     }
@@ -1135,3 +1148,227 @@ function updateStats(startTime, success) {
 function generateRequestId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 }
+
+// ==========================================
+// 管理后台逻辑 (无需 KV，直接调用 CF API 修改环境变量)
+// 依赖环境变量：ADMIN_PASSWORD, CF_ACCOUNT_ID, CF_SCRIPT_NAME, CF_API_TOKEN
+// ==========================================
+
+async function handleAdminApiRequest(request, pathname) {
+    // 基础认证
+    const authHeader = request.headers.get('Authorization');
+    const adminPassword = typeof ADMIN_PASSWORD !== 'undefined' ? ADMIN_PASSWORD : null;
+
+    if (!adminPassword) {
+        return new Response(JSON.stringify({ error: '未配置 ADMIN_PASSWORD' }), { status: 500 });
+    }
+
+    if (authHeader !== `Bearer ${adminPassword}`) {
+        return new Response(JSON.stringify({ error: '未授权' }), { status: 401 });
+    }
+
+    // GET /api/admin/tokens
+    if (request.method === 'GET' && pathname === '/api/admin/tokens') {
+        const tokens = typeof ALLOWED_BOT_TOKENS !== 'undefined' ? ALLOWED_BOT_TOKENS : '';
+        return new Response(JSON.stringify({ tokens }), {
+            headers: { 'content-type': 'application/json' }
+        });
+    }
+
+    // POST /api/admin/tokens
+    if (request.method === 'POST' && pathname === '/api/admin/tokens') {
+        try {
+            const body = await request.json();
+            const newTokens = body.tokens;
+
+            if (typeof newTokens !== 'string') {
+                return new Response(JSON.stringify({ error: '参数错误' }), { status: 400 });
+            }
+
+            const success = await updateCloudflareEnv('ALLOWED_BOT_TOKENS', newTokens);
+
+            if (success) {
+                return new Response(JSON.stringify({ success: true, message: '更新成功' }), {
+                    headers: { 'content-type': 'application/json' }
+                });
+            } else {
+                return new Response(JSON.stringify({ error: '更新失败，请检查 CF_API 配置' }), { status: 500 });
+            }
+        } catch (e) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        }
+    }
+
+    return new Response('Not Found', { status: 404 });
+}
+
+async function updateCloudflareEnv(key, value) {
+    const accountId = typeof CF_ACCOUNT_ID !== 'undefined' ? CF_ACCOUNT_ID : null;
+    const scriptName = typeof CF_SCRIPT_NAME !== 'undefined' ? CF_SCRIPT_NAME : null;
+    const apiToken = typeof CF_API_TOKEN !== 'undefined' ? CF_API_TOKEN : null;
+
+    if (!accountId || !scriptName || !apiToken) {
+        console.error('缺少 Cloudflare API 凭证');
+        return false;
+    }
+
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/bindings`;
+
+    // CF API 更新 bindings 时，只能用 PUT，要求传全量 bindings。由于脚本内无法直接获取完整原始 bindings 结构，
+    // 这里采用更安全的 PATCH /workers/scripts/:script_name/script 方式（如果 worker API 支持）或者仅更新 secret bindings
+    // 更稳妥的方式是：Cloudflare 的脚本环境变量实际上是 Worker 的 "bindings"，
+    // PUT 到 /bindings 接口会覆盖所有 bindings。为了避免覆盖问题，建议用户只配置这个变量，
+    // 但是这里为了极简，我们直接 PUT 全量 bindings 中的纯文本配置。但如果用户有其他绑定的 KV 等，会被覆盖。
+    // 因此在纯前端更新 CF Worker 配置有一定局限性。
+    // 为确保可靠性并避免覆盖，我们在请求体通过 PATCH api: `PATCH accounts/:account_id/workers/scripts/:script_name/settings` (仅针对设置更新)
+
+    // Cloudflare Workers REST API: 更新 bindings（这里我们获取现有的再更新）
+    try {
+        // 先 GET 当前 script 的信息以获取旧 bindings
+        const getRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`, {
+            headers: { 'Authorization': `Bearer ${apiToken}` }
+        });
+        const getData = await getRes.json();
+        if (!getData.success) return false;
+
+        let bindings = getData.result.bindings || [];
+
+        // 更新或添加目标变量
+        let found = false;
+        for (let b of bindings) {
+            if (b.name === key && b.type === 'plain_text') {
+                b.text = value;
+                found = true;
+                break;
+            } else if (b.name === key && b.type === 'secret_text') {
+                b.text = value;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            bindings.push({ type: 'plain_text', name: key, text: value });
+        }
+
+        const putRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/bindings`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${apiToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(bindings)
+        });
+
+        const putData = await putRes.json();
+        return putData.success;
+    } catch (err) {
+        console.error('更新 Cloudflare 环境变量失败', err);
+        return false;
+    }
+}
+
+const ADMIN_HTML = `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TG 白名单管理</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background: #f3f4f6; padding: 20px; color: #1f2937; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; font-size: 24px; color: #111827; }
+        .form-group { margin-bottom: 16px; }
+        label { display: block; margin-bottom: 8px; font-weight: 500; }
+        input[type="password"], textarea { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-family: monospace; }
+        textarea { height: 120px; resize: vertical; }
+        button { background: #3b82f6; color: white; border: none; padding: 10px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; }
+        button:hover { background: #2563eb; }
+        .status { margin-top: 16px; padding: 12px; border-radius: 4px; display: none; }
+        .success { background: #d1fae5; color: #065f46; }
+        .error { background: #fee2e2; color: #991b1b; }
+        .help-text { font-size: 13px; color: #6b7280; margin-top: 4px; }
+        .auth-section { margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid #e5e7eb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Bot Token 白名单管理</h1>
+        
+        <div class="auth-section">
+            <div class="form-group">
+                <label>管理员密码</label>
+                <input type="password" id="password" placeholder="输入 ADMIN_PASSWORD 设定的密码">
+            </div>
+            <button onclick="loadTokens()">获取当前配置</button>
+        </div>
+
+        <div id="manage-section" style="display: none;">
+            <div class="form-group">
+                <label>允许的 Bot Tokens</label>
+                <textarea id="tokensText" placeholder="多个Token用英文逗号分隔..."></textarea>
+                <div class="help-text">格式：1234567890:AAH... , 0987654321:BBH... （用英文逗号分隔）</div>
+            </div>
+            <button onclick="saveTokens()">保存并应用</button>
+        </div>
+
+        <div id="statusMsg" class="status"></div>
+    </div>
+
+    <script>
+        function showStatus(msg, isError) {
+            const el = document.getElementById('statusMsg');
+            el.textContent = msg;
+            el.className = 'status ' + (isError ? 'error' : 'success');
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 4000);
+        }
+
+        async function loadTokens() {
+            const pwd = document.getElementById('password').value;
+            if(!pwd) return showStatus('请输入密码', true);
+
+            try {
+                const res = await fetch('/api/admin/tokens', {
+                    headers: { 'Authorization': 'Bearer ' + pwd }
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('manage-section').style.display = 'block';
+                    document.getElementById('tokensText').value = data.tokens;
+                    showStatus('配置加载成功', false);
+                } else {
+                    showStatus(data.error || '获取失败', true);
+                }
+            } catch(e) {
+                showStatus('网络错误', true);
+            }
+        }
+
+        async function saveTokens() {
+            const pwd = document.getElementById('password').value;
+            const newTokens = document.getElementById('tokensText').value;
+
+            try {
+                const res = await fetch('/api/admin/tokens', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + pwd,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tokens: newTokens })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showStatus('保存成功！等待约几秒后生效。', false);
+                } else {
+                    showStatus(data.error || '保存失败', true);
+                }
+            } catch(e) {
+                showStatus('网络错误', true);
+            }
+        }
+    </script>
+</body>
+</html>
+`;
