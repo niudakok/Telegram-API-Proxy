@@ -75,13 +75,22 @@ https://你的项目名.pages.dev/api/bot
 
 点击 **Edit code**，将 `manual-worker/worker.js` 的全部内容粘贴进去，点击 **Save and Deploy**。
 
-**3. 配置环境变量**
+**3. 配置环境变量 (持久化方案)**
 
 > [!IMPORTANT]
-> **请务必直接在 Cloudflare 控制台 Web 界面配置变量**。
-> 注意：不要将这些变量写在 `wrangler.toml` 文件中提交，否则 GitHub 自动重构部署时，会根据 .toml 文件的内容清空或覆盖掉你已经在网页端或管理后台配置好的数据。
+> **请务必使用 Cloudflare 的 Secrets (加密变量) 功能**。
+> 相比普通环境变量，Secrets 不会被 GitHub 自动部署过程中的 `wrangler.toml` 清空或覆盖，是实现 Token 长久保存的最佳方式。
 
-返回 Worker 详情页 → **Settings** → **Variables** → **Environment Variables** → **Add variable**
+**操作步骤：**
+1.  进入 Worker 详情页 → **Settings** → **Variables**。
+2.  找到下方的 **Secrets** 栏目（而不是上面的 Environment Variables）。
+3.  点击 **Add variable**，分别填入：
+    - `ALLOWED_BOT_TOKENS`: 你的 Bot Token 列表。
+    - `ADMIN_PASSWORD`: 管理后台登录密码。
+4.  如果你要使用自动管理功能，还需添加：
+    - `CF_ACCOUNT_ID` / `CF_SCRIPT_NAME` / `CF_API_TOKEN`。
+
+---
 
 你可以直接配置固定白名单：
 | 变量名 | 值 | 说明 |
