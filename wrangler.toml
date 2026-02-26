@@ -1,0 +1,10 @@
+name = "telegram-api-proxy"
+main = "manual-worker/worker.js"
+compatibility_date = "2023-12-01"
+
+[vars]
+# ALLOWED_BOT_TOKENS = "你的Token"
+# ADMIN_PASSWORD = "你的管理密码"
+# CF_ACCOUNT_ID = "你的账号ID"
+# CF_SCRIPT_NAME = "telegram-api-proxy"
+# CF_API_TOKEN = "你的API令牌"

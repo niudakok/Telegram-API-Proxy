@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token 管理后台</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .box {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #111827;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: monospace;
+            resize: vertical;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 10px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        #msg {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+            font-size: 0.9rem;
+        }
+
+        .help-text {
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="box">
+        <h1>Token 管理后台</h1>
+        <div class="form-group">
+            <label>管理员密码</label>
+            <input type="password" id="pw" placeholder="输入 ADMIN_PASSWORD">
+        </div>
+        <button onclick="load()">连接并获取配置</button>
+
+        <div id="editor" style="display:none; margin-top: 20px;">
+            <div class="form-group">
+                <label>允许的 Bot Tokens (逗号分隔)</label>
+                <textarea id="tk" placeholder="123456:ABC..., 789012:DEF..."></textarea>
+                <div class="help-text">修改后点击下方保存，将通过 Cloudflare API 同步到环境变量。</div>
+            </div>
+            <button onclick="save()">保存并应用</button>
+        </div>
+        <div id="msg"></div>
+    </div>
+    <script>
+        const msg = document.getElementById('msg');
+        function show(txt, err) {
+            msg.innerText = txt;
+            msg.style.display = 'block';
+            msg.style.background = err ? '#fee2e2' : '#d1fae5';
+            msg.style.color = err ? '#991b1b' : '#065f46';
+            if (!err) setTimeout(() => msg.style.display = 'none', 5000);
+        }
+
+        // 自动识别 API 路径前缀 (Pages 为 /api/admin/tokens, Workers 为 /api/admin/tokens)
+        // 统一使用相对路径 /api/admin/tokens
+        const apiPath = '/api/admin/tokens';
+
+        async function load() {
+            const p = document.getElementById('pw').value;
+            if (!p) return show('请输入密码', true);
+            try {
+                const res = await fetch(apiPath, { headers: { 'Authorization': 'Bearer ' + p } });
+                if (res.ok) {
+                    const d = await res.json();
+                    document.getElementById('tk').value = d.tokens || '';
+                    document.getElementById('editor').style.display = 'block';
+                    show('连接成功', false);
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    show(d.error || '认证失败，请检查密码', true);
+                }
+            } catch (e) {
+                show('网络错误，请确认服务已正确部署', true);
+            }
+        }
+
+        async function save() {
+            const p = document.getElementById('pw').value;
+            const t = document.getElementById('tk').value;
+            try {
+                const res = await fetch(apiPath, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + p, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tokens: t })
+                });
+                if (res.ok) {
+                    show('保存成功！环境变量已在更新中，约几秒后生效。', false);
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    show(d.error || '保存失败，请检查 API 权限配置', true);
+                }
+            } catch (e) {
+                show('网络错误', true);
+            }
+        }
+    </script>
+</body>
+
+</html>
