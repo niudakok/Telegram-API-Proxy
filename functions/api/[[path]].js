@@ -553,14 +553,39 @@ async function proxyToTelegram(request, requestInfo, attempt = 0) {
         try {
             if (contentType.includes('multipart/form-data') || FILE_UPLOAD_METHODS.has(apiMethod)) {
                 const formData = await request.formData();
+                // 处理 setWebhook 方法，确保 proxy_url 正确设置
+                if (apiMethod === 'setWebhook' && formData.has('proxy_url')) {
+                    // 移除 proxy_url 参数，让 Telegram 直接使用我们的代理地址
+                    formData.delete('proxy_url');
+                }
                 requestBody = formData;
                 requestHeaders.delete('content-type');
             } else {
-                requestBody = await request.arrayBuffer();
-                if (request.method === 'POST' && !contentType) {
-                    requestHeaders.set('Content-Type', 'application/json');
-                } else if (contentType) {
-                    requestHeaders.set('Content-Type', contentType);
+                // 处理 JSON 格式的 setWebhook 请求
+                if (apiMethod === 'setWebhook') {
+                    const bodyText = await request.text();
+                    try {
+                        const bodyJson = JSON.parse(bodyText);
+                        // 移除 proxy_url 参数
+                        if (bodyJson.proxy_url) {
+                            delete bodyJson.proxy_url;
+                        }
+                        requestBody = JSON.stringify(bodyJson);
+                        requestHeaders.set('Content-Type', 'application/json');
+                    } catch {
+                        // 如果不是有效的 JSON，直接使用原始请求体
+                        requestBody = bodyText;
+                        if (contentType) {
+                            requestHeaders.set('Content-Type', contentType);
+                        }
+                    }
+                } else {
+                    requestBody = await request.arrayBuffer();
+                    if (request.method === 'POST' && !contentType) {
+                        requestHeaders.set('Content-Type', 'application/json');
+                    } else if (contentType) {
+                        requestHeaders.set('Content-Type', contentType);
+                    }
                 }
             }
         } catch (error) {

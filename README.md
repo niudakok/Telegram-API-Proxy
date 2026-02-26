@@ -17,12 +17,13 @@
 
 ## ✨ 功能特性
 
-- ✅ **完整支持**：支持所有 Telegram Bot API 方法和文件上传。
+- ✅ **完整支持**：支持所有 Telegram Bot API 方法和文件上传，包括 webhook 相关方法。
 - 🔐 **Token 白名单**：内置授权机制，仅允许特定 Bot 使用代理，防止滥用。
 - 🛠️ **可视化后台**：内置无 KV 管理页面，可直接在浏览器修改授权 Token。
 - 🛡️ **安全过滤**：自动拦截恶意攻击、SQL 注入及可疑请求。
 - ⚡ **高性能**：利用 Cloudflare 全球网络，支持自动重试与熔断机制。
 - 🇨🇳 **中文化界面**：主页及后台管理面板全面支持中文。
+- 🌐 **Webhook 支持**：完整支持 setWebhook、deleteWebhook 和 getWebhookInfo 方法。
 
 ## 🛠️ 快速部署 (GitHub 自动化版)
 
@@ -59,6 +60,25 @@ import requests
 API_BASE = "https://tap.niuda123.workers.dev/bot12345:TOKEN"
 resp = requests.get(f"{API_BASE}/getMe")
 print(resp.json())
+```
+
+### Webhook 使用示例
+```python
+import requests
+API_BASE = "https://tap.niuda123.workers.dev/bot12345:TOKEN"
+
+# 设置 Webhook
+webhook_url = "https://your-domain.com/webhook"
+resp = requests.post(f"{API_BASE}/setWebhook", json={"url": webhook_url})
+print("Set Webhook:", resp.json())
+
+# 获取 Webhook 信息
+resp = requests.get(f"{API_BASE}/getWebhookInfo")
+print("Webhook Info:", resp.json())
+
+# 删除 Webhook
+resp = requests.post(f"{API_BASE}/deleteWebhook")
+print("Delete Webhook:", resp.json())
 ```
 
 ## 🖥️ 管理后台

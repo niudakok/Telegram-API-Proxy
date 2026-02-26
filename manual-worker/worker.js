@@ -164,7 +164,36 @@ async function proxyToTelegram(request, info) {
 
     let body = null;
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-        body = await request.clone().arrayBuffer();
+        const contentType = request.headers.get('content-type') || '';
+        if (info.apiMethod === 'setWebhook') {
+            if (contentType.includes('multipart/form-data')) {
+                const formData = await request.formData();
+                // 处理 setWebhook 方法，确保 proxy_url 正确设置
+                if (formData.has('proxy_url')) {
+                    // 移除 proxy_url 参数，让 Telegram 直接使用我们的代理地址
+                    formData.delete('proxy_url');
+                }
+                body = formData;
+                headers.delete('content-type');
+            } else {
+                // 处理 JSON 格式的 setWebhook 请求
+                const bodyText = await request.text();
+                try {
+                    const bodyJson = JSON.parse(bodyText);
+                    // 移除 proxy_url 参数
+                    if (bodyJson.proxy_url) {
+                        delete bodyJson.proxy_url;
+                    }
+                    body = JSON.stringify(bodyJson);
+                    headers.set('Content-Type', 'application/json');
+                } catch {
+                    // 如果不是有效的 JSON，直接使用原始请求体
+                    body = bodyText;
+                }
+            }
+        } else {
+            body = await request.clone().arrayBuffer();
+        }
     }
 
     const response = await fetch(newUrl, {
