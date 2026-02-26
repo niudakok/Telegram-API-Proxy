@@ -1,4 +1,4 @@
-name = "telegram-api-proxy"
+name = 'tap'
 main = "manual-worker/worker.js"
 compatibility_date = "2023-12-01"
 
