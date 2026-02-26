@@ -77,6 +77,10 @@ https://你的项目名.pages.dev/api/bot
 
 **3. 配置环境变量**
 
+> [!IMPORTANT]
+> **请务必直接在 Cloudflare 控制台 Web 界面配置变量**。
+> 注意：不要将这些变量写在 `wrangler.toml` 文件中提交，否则 GitHub 自动重构部署时，会根据 .toml 文件的内容清空或覆盖掉你已经在网页端或管理后台配置好的数据。
+
 返回 Worker 详情页 → **Settings** → **Variables** → **Environment Variables** → **Add variable**
 
 你可以直接配置固定白名单：
