@@ -1,86 +1,81 @@
-# Telegram API 代理
+# Telegram API 安全代理
 
-![版本](https://img.shields.io/badge/版本-6.0-blue.svg?cacheSeconds=2592000)
+![版本](https://img.shields.io/badge/版本-7.0-blue.svg?cacheSeconds=2592000)
 ![许可证: GPL-3.0](https://img.shields.io/badge/许可证-GPL--3.0-yellow.svg)
+![部署: Cloudflare](https://img.shields.io/badge/部署-Cloudflare-orange.svg)
 
-基于 Cloudflare 的 Telegram Bot API 代理服务，用于在访问受限地区无需 VPN 即可使用 Telegram API。
+基于 Cloudflare 的高性能 Telegram Bot API 代理服务。支持白名单管理、全自动化部署及可视化管理后台，专为网络受限环境设计。
 
-## 项目简介
+---
 
-本项目提供了一个安全可靠的 Telegram Bot API 代理，托管在 Cloudflare Pages 上，具备高可用性和高性能。代理会将你的 API 请求透明转发至 `api.telegram.org`。
+## 🚀 项目简介
 
-支持两种部署方式：
-- **Cloudflare Pages**（推荐）：使用 `functions/` 目录，绑定 GitHub 仓库自动部署
-- **Cloudflare Workers**：使用 `manual-worker/worker.js`，手动粘贴代码部署
+本项目提供了一个安全、透明的 Telegram Bot API 代理网关。
+- **自动同步**：支持关联 GitHub 仓库，实现 `git push` 后自动构建与部署。
+- **多平台支持**：同时支持 Cloudflare Workers 和 Cloudflare Pages 部署。
+- **隐私安全**：透明转发请求，不存储任何消息内容。
 
-## 功能特性
+## ✨ 功能特性
 
-- ✅ 支持所有 Telegram Bot API 方法
-- ⚡ 速率限制：每 IP 每分钟 100 次请求，全局每分钟 5000 次
-- 🛡️ 安全防护：拦截 SQL 注入、XSS、路径遍历等恶意请求
-- 🔄 自动重试：失败请求最多重试 3 次（指数退避）
-- 🔌 熔断器：连续失败时自动断路保护
-- 🔐 Bot Token 白名单：通过环境变量限制只有自己的 Bot 才能使用
+- ✅ **完整支持**：支持所有 Telegram Bot API 方法和文件上传。
+- 🔐 **Token 白名单**：内置授权机制，仅允许特定 Bot 使用代理，防止滥用。
+- 🛠️ **可视化后台**：内置无 KV 管理页面，可直接在浏览器修改授权 Token。
+- 🛡️ **安全过滤**：自动拦截恶意攻击、SQL 注入及可疑请求。
+- ⚡ **高性能**：利用 Cloudflare 全球网络，支持自动重试与熔断机制。
+- 🇨🇳 **中文化界面**：主页及后台管理面板全面支持中文。
 
-## 快速使用
+## 🛠️ 快速部署 (GitHub 自动化版)
 
-将标准 Telegram API 地址替换为代理地址即可（前缀 `/api/bot`）：
+1. **Fork 本仓库** 到你的 GitHub 账号。
+2. 登录 **Cloudflare 控制台**。
+3. 进入 **Workers & Pages** -> **Create Application** -> **Workers**。
+4. 选择 **Connect to Git** 并关联你的仓库。
+5. 在配置页面，`wrangler.toml` 会自动指定入口为 `manual-worker/worker.js`。
+6. 点击部署。
 
-```
-https://你的域名.pages.dev/api/bot
-```
+> 💡 详细部署及 API 权限配置请参考 [DEPLOY.md](DEPLOY.md)。
 
-### JavaScript 示例
+## ⚙️ 环境变量配置
 
-```javascript
-const botToken = "你的_Bot_Token";
-const chatId = "目标_Chat_ID";
-const message = "Hello World";
+要启用管理后台和 Token 白名单，请在 Cloudflare 控制台设置以下变量：
 
-const url = `https://你的域名.pages.dev/api/bot${botToken}/sendMessage?text=${message}&chat_id=${chatId}`;
+| 变量名 | 必填 | 说明 |
+| :--- | :--- | :--- |
+| `ALLOWED_BOT_TOKENS` | 是 | 允许使用的 Bot Token (多个用逗号隔开) |
+| `ADMIN_PASSWORD` | 可选 | 登录 `/admin` 后台的管理员密码 |
+| `CF_ACCOUNT_ID` | 可选 | 用于后台动态修改配置 (CF 账户 ID) |
+| `CF_SCRIPT_NAME` | 可选 | 当前 Worker 的名称 (如 `tap`) |
+| `CF_API_TOKEN` | 可选 | 具有 Edit Worker 权限的 API 令牌 |
 
-fetch(url).then(res => res.json()).then(console.log);
-```
+## 📖 使用示例
+
+将 API 前缀替换为你的代理地址：
+- **Workers 路径**：`https://your-worker.workers.dev/bot<TOKEN>/<METHOD>`
+- **Pages 路径**：`https://your-page.pages.dev/api/bot<TOKEN>/<METHOD>`
 
 ### Python 示例
-
 ```python
 import requests
-
-def send_telegram_message(message):
-    token = "你的_Bot_Token"
-    chat_id = "目标_Chat_ID"
-    url = f"https://你的域名.pages.dev/api/bot{token}/sendMessage"
-    
-    payload = {
-        "text": message,
-        "chat_id": chat_id
-    }
-    
-    response = requests.post(url, json=payload)
-    return response.json()
+API_BASE = "https://tap.niuda123.workers.dev/bot12345:TOKEN"
+resp = requests.get(f"{API_BASE}/getMe")
+print(resp.json())
 ```
 
-## 部署说明
+## 🖥️ 管理后台
 
-详细部署步骤请参阅 [DEPLOY.md](DEPLOY.md)。
+访问 `https://你的域名/admin` 即可进入管理后台。
+- 无需配置数据库，通过 Cloudflare API 直接同步设置。
+- 界面简洁，支持实时更新 Token 白名单。
 
-## 安全配置（限制只有自己使用）
+---
 
-通过 Cloudflare 控制台配置环境变量 `ALLOWED_BOT_TOKENS`，填入你自己的 Bot Token（多个用英文逗号分隔）：
-
-```
-ALLOWED_BOT_TOKENS=1234567890:AABBccDDeeFF,9876543210:ZZYYxxWWvvUU
-```
-
-配置后，只有白名单中的 Token 才能使用此代理，其他请求会被拒绝（返回 403）。
-
-## 项目许可证
+## 📄 项目许可证
 
 本项目采用 [GPL-3.0](LICENSE) 许可证。
 
-## 作者
+## 👤 作者
 
-**Anonymous**
+**Anonymous** (Modded by Antigravity)
 
 * Telegram: [@BXAMbot](https://t.me/BXAMbot)
+* GitHub: [niudakok/Telegram-API-Proxy](https://github.com/niudakok/Telegram-API-Proxy)
