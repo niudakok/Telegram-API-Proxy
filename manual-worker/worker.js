@@ -220,44 +220,35 @@ async function updateCloudflareEnv(key, value, env) {
     const apiTok = env.CF_API_TOKEN;
 
     if (!accId || !scName || !apiTok) {
-        return { success: false, error: '缺少必要的 CF 环境变量：CF_ACCOUNT_ID, CF_SCRIPT_NAME 或 CF_API_TOKEN' };
+        return { success: false, error: '未配置 CF_ACCOUNT_ID/CF_SCRIPT_NAME/CF_API_TOKEN' };
     }
 
     try {
-        const getUrl = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}`;
-        const res = await fetch(getUrl, { headers: { 'Authorization': `Bearer ${apiTok}` } });
-        const data = await res.json();
-
-        if (!data.success) {
-            const err = data.errors?.[0]?.message || '获取配置失败';
-            return { success: false, error: `CF API 错误: ${err}` };
-        }
-
-        let bindings = data.result.bindings || [];
-        let found = false;
-        for (let b of bindings) {
-            if (b.name === key) {
-                b.text = value;
-                found = true;
-                break;
-            }
-        }
-        if (!found) bindings.push({ type: 'plain_text', name: key, text: value });
-
-        const putUrl = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}/bindings`;
-        const putRes = await fetch(putUrl, {
+        // 尝试使用 Secrets API 进行更新，这样既可以更新普通变量也可以更新 Secret，且不干扰其他绑定
+        const url = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}/secrets`;
+        const res = await fetch(url, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${apiTok}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(bindings)
+            body: JSON.stringify({
+                name: key,
+                text: value,
+                type: 'secret_text'
+            })
         });
 
-        const putData = await putRes.json();
-        return putData.success ? { success: true } : { success: false, error: putData.errors?.[0]?.message || '更新失败' };
+        const data = await res.json();
+        if (data.success) {
+            return { success: true };
+        } else {
+            const err = data.errors?.[0]?.message || '更新失败';
+            // 如果 Secrets API 不适用（例如脚本不存在或其他原因），返回详细错误
+            return { success: false, error: `CF API 报错: ${err}` };
+        }
     } catch (e) {
-        return { success: false, error: e.message };
+        return { success: false, error: '网络或系统异常: ' + e.message };
     }
 }
 
@@ -324,7 +315,7 @@ const ADMIN_HTML = `
         textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         button { width: 100%; background: #007bff; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        #msg { margin-top: 10px; padding: 10px; border-radius: 4px; display: none; word-break: break-all; }
+        #msg { margin-top: 10px; padding: 10px; border-radius: 4px; display: none; word-break: break-all; white-space: pre-wrap; }
     </style>
 </head>
 <body>
@@ -352,15 +343,20 @@ const ADMIN_HTML = `
             show('正在获取...', false);
             try {
                 const res = await fetch('/api/admin/tokens', { headers: { 'Authorization': 'Bearer '+p } });
-                const d = await res.json();
-                if (res.ok) {
-                    document.getElementById('tk').value = d.tokens || '';
-                    document.getElementById('editor').style.display = 'block';
-                    show('获取成功', false);
-                } else {
-                    show('失败: ' + (d.error || '密码可能不正确'), true);
+                const text = await res.text();
+                try {
+                    const d = JSON.parse(text);
+                    if (res.ok) {
+                        document.getElementById('tk').value = d.tokens || '';
+                        document.getElementById('editor').style.display = 'block';
+                        show('获取成功', false);
+                    } else {
+                        show('失败: ' + (d.error || '认证失败'), true);
+                    }
+                } catch(e) {
+                    show('服务端返回异常格式 (非 JSON):\\n' + text, true);
                 }
-            } catch (e) { show('获取失败: ' + e.message, true); }
+            } catch (e) { show('网络错误: ' + e.message, true); }
         }
         async function save() {
             const p = document.getElementById('pw').value;
@@ -372,11 +368,16 @@ const ADMIN_HTML = `
                     headers: { 'Authorization': 'Bearer '+p, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ tokens: t })
                 });
-                const d = await res.json();
-                if (res.ok && d.success) {
-                    show('保存成功！需约 10 秒生效。', false);
-                } else {
-                    show('保存失败: ' + (d.error || '未知错误'), true);
+                const text = await res.text();
+                try {
+                    const d = JSON.parse(text);
+                    if (res.ok && d.success) {
+                        show('保存成功！需约 10 秒生效。', false);
+                    } else {
+                        show('保存失败: ' + (d.error || '接口报错'), true);
+                    }
+                } catch(e) {
+                    show('保存接口返回异常 (非 JSON):\\n' + text, true);
                 }
             } catch (e) { show('系统错误: ' + e.message, true); }
         }
