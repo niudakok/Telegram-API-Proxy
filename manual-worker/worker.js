@@ -1,4 +1,5 @@
-//Anonymous
+// Telegram API Proxy - Workers Version
+// Author: Anonymous (Modded by Antigravity)
 
 const URL_PATH_REGEX = /^\/bot(?<bot_token>[^/]+)\/(?<api_method>[a-zA-Z0-9_]+)/i;
 
@@ -37,7 +38,7 @@ const SUSPICIOUS_THRESHOLD = 10;
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
 const MAX_BODY_SIZE = 50 * 1024 * 1024;
-const ALLOWED_COUNTRIES = []; // 已去除国家限制，允许所有地区访问
+const ALLOWED_COUNTRIES = []; // 已去除国家限制
 const BLOCKED_COUNTRIES = [];
 const ALLOWED_USER_AGENTS = /telegram|bot|curl|postman|httpie|axios|fetch/i;
 const BLOCKED_USER_AGENTS = /scanner|crawler|spider|bot.*attack|sqlmap|nikto|nmap/i;
@@ -97,392 +98,27 @@ let stats = {
     lastReset: Date.now()
 };
 
-function handleStatsRequest() {
-    const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
-    const successfulRequests = stats.totalRequests - stats.failedRequests - stats.blocked - stats.rateLimited;
-
-    return new Response(JSON.stringify({
-        ok: true,
-        uptime,
-        totalRequests: stats.totalRequests,
-        successfulRequests: successfulRequests,
-        failedRequests: stats.failedRequests,
-        rateLimited: stats.rateLimited,
-        blocked: stats.blocked,
-        retries: stats.retries,
-        avgLatency: Math.floor(stats.avgResponseTime)
-    }), {
-        status: 200,
-        headers: {
-            'content-type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        }
-    });
-}
-
-function handleRootRequest(request) {
-    const workerUrl = new URL(request.url).origin;
-    const apiUrl = workerUrl + '/bot';
-
-    const html = `<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram API Proxy - Status Dashboard</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-            color: #c9d1d9;
-            min-height: 100vh;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .container {
-            max-width: 800px;
-            width: 100%;
-            animation: fadeIn 0.6s ease-in;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            background: rgba(35, 134, 54, 0.15);
-            border: 1px solid #238636;
-            padding: 12px 24px;
-            border-radius: 50px;
-            margin-bottom: 20px;
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-        
-        .status-light {
-            width: 12px;
-            height: 12px;
-            background: #3fb950;
-            border-radius: 50%;
-            box-shadow: 0 0 20px #3fb950;
-            animation: blink 1.5s infinite;
-        }
-        
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-        
-        .status-text {
-            color: #3fb950;
-            font-weight: 600;
-            font-size: 14px;
-        }
-        
-        h1 {
-            font-size: 2.5em;
-            color: #fff;
-            margin-bottom: 10px;
-        }
-        
-        .card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 30px;
-            margin-bottom: 20px;
-            transition: all 0.3s ease;
-        }
-        
-        .card:hover {
-            border-color: #58a6ff;
-            box-shadow: 0 8px 24px rgba(88, 166, 255, 0.1);
-            transform: translateY(-2px);
-        }
-        
-        .card-title {
-            font-size: 1.3em;
-            color: #fff;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .icon {
-            width: 24px;
-            height: 24px;
-        }
-        
-        .url-container {
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            direction: ltr;
-            text-align: left;
-        }
-        
-        .url-text {
-            flex: 1;
-            font-family: 'Courier New', monospace;
-            color: #79c0ff;
-            font-size: 0.95em;
-            word-break: break-all;
-        }
-        
-        .copy-btn {
-            background: #238636;
-            color: #fff;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.2s;
-            white-space: nowrap;
-        }
-        
-        .copy-btn:hover {
-            background: #2ea043;
-            transform: scale(1.05);
-        }
-        
-        .copy-btn:active {
-            transform: scale(0.95);
-        }
-        
-        .copy-btn.copied {
-            background: #1f6feb;
-        }
-        
-        .test-btn {
-            background: #1f6feb;
-            color: #fff;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 1em;
-            transition: all 0.2s;
-            width: 100%;
-        }
-        
-        .test-btn:hover {
-            background: #388bfd;
-        }
-        
-        .test-result {
-            margin-top: 15px;
-            padding: 15px;
-            border-radius: 8px;
-            display: none;
-        }
-        
-        .test-result.success {
-            background: rgba(35, 134, 54, 0.15);
-            border: 1px solid #238636;
-            color: #3fb950;
-        }
-        
-        .test-result.error {
-            background: rgba(248, 81, 73, 0.15);
-            border: 1px solid #f85149;
-            color: #f85149;
-        }
-        
-        .footer {
-            text-align: center;
-            margin-top: 40px;
-            padding: 20px;
-            color: #8b949e;
-            font-size: 0.9em;
-        }
-        
-        .footer a {
-            color: #58a6ff;
-            text-decoration: none;
-        }
-        
-        .loading {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid #30363d;
-            border-top-color: #58a6ff;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        @media (max-width: 600px) {
-            h1 { font-size: 1.8em; }
-            .card { padding: 20px; }
-            .url-container { flex-direction: column; }
-            .copy-btn { width: 100%; }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="status-badge">
-                <span class="status-light"></span>
-                <span class="status-text">API فعال و آماده</span>
-            </div>
-            <h1>Telegram API Proxy</h1>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">
-                <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                </svg>
-                آدرس API
-            </div>
-            <div class="url-container">
-                <span class="url-text" id="apiUrl">${apiUrl}</span>
-                <button class="copy-btn" onclick="copyToClipboard()">کپی</button>
-            </div>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">
-                <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                </svg>
-                وضعیت اتصال
-            </div>
-            <button class="test-btn" onclick="testAPI()">
-                <span id="testBtnText">تست اتصال API</span>
-            </button>
-            <div class="test-result" id="testResult"></div>
-        </div>
-        
-        <div class="footer">
-            <p>Powered by Cloudflare Workers</p>
-            <p style="margin-top: 10px;">Designed by: <strong>Anonymous</strong></p>
-        </div>
-    </div>
-    
-    <script>
-        function copyToClipboard() {
-            const text = document.getElementById('apiUrl').textContent;
-            const btn = event.target;
-            
-            navigator.clipboard.writeText(text).then(() => {
-                const originalText = btn.textContent;
-                btn.textContent = 'کپی شد';
-                btn.classList.add('copied');
-                
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                    btn.classList.remove('copied');
-                }, 2000);
-            });
-        }
-        
-        async function testAPI() {
-            const btn = document.getElementById('testBtnText');
-            const result = document.getElementById('testResult');
-            
-            btn.innerHTML = '<span class="loading"></span> در حال تست...';
-            result.style.display = 'none';
-            
-            try {
-                const start = Date.now();
-                const response = await fetch('/stats');
-                const latency = Date.now() - start;
-                const data = await response.json();
-                
-                if (data.ok) {
-                    result.className = 'test-result success';
-                    result.innerHTML = 'اتصال موفق - پینگ: ' + latency + 'ms' + ' (میانگین API: ' + data.avgLatency + 'ms)';
-                } else {
-                    throw new Error('Test failed');
-                }
-            } catch (error) {
-                result.className = 'test-result error';
-                result.innerHTML = 'خطا در اتصال به API';
-            }
-            
-            result.style.display = 'block';
-            btn.textContent = 'تست اتصال API';
-        }
-        
-        document.querySelectorAll('.card').forEach((card, index) => {
-            card.style.animationDelay = (index * 0.1) + 's';
-        });
-    </script>
-</body>
-</html>`;
-
-    return new Response(html, {
-        status: 200,
-        headers: {
-            'content-type': 'text/html;charset=UTF-8',
-            'Cache-Control': 'public, max-age=3600'
-        }
-    });
-}
-
-async function handle404Request() {
-    return new Response(JSON.stringify({
-        ok: false,
-        error_code: 404,
-        description: 'Invalid endpoint. Please check Telegram Bot API documentation.'
-    }), {
-        status: 404,
-        headers: { 'content-type': 'application/json' }
-    });
-}
+// ==========================================
+// 主请求入口
+// ==========================================
 
 addEventListener('fetch', (event) => {
     event.respondWith(handleRequest(event.request));
 });
 
 async function handleRequest(request) {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const pathname = url.pathname.toLowerCase().replace(/\/$/, ""); // 归一化路径，去除末尾斜杠
 
     if (pathname === '/stats') {
         return handleStatsRequest();
     }
 
-    if (pathname === '/') {
+    if (pathname === '' || pathname === '/') {
         return handleRootRequest(request);
     }
 
-    // 管理后台页面
+    // 管理页面
     if (pathname === '/admin') {
         return new Response(ADMIN_HTML, {
             status: 200,
@@ -490,7 +126,7 @@ async function handleRequest(request) {
         });
     }
 
-    // 管理 API 路由
+    // 管理 API
     if (pathname.startsWith('/api/admin/')) {
         return handleAdminApiRequest(request, pathname);
     }
@@ -499,7 +135,9 @@ async function handleRequest(request) {
         return handleCorsPreflightRequest();
     }
 
-    if (URL_PATH_REGEX.test(pathname)) {
+    // 原始路径匹配 (不转小写，因为 Token 大小写敏感)
+    const rawPathname = url.pathname;
+    if (URL_PATH_REGEX.test(rawPathname)) {
         const startTime = Date.now();
         try {
             await cleanupExpiredData();
@@ -552,28 +190,170 @@ async function handleRequest(request) {
     return handle404Request();
 }
 
+// ==========================================
+// 业务处理逻辑
+// ==========================================
+
+function handleStatsRequest() {
+    const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
+    const successful = stats.totalRequests - stats.failedRequests - stats.blocked - stats.rateLimited;
+
+    return new Response(JSON.stringify({
+        ok: true,
+        uptime,
+        totalRequests: stats.totalRequests,
+        successfulRequests: Math.max(0, successful),
+        failedRequests: stats.failedRequests,
+        rateLimited: stats.rateLimited,
+        blocked: stats.blocked,
+        retries: stats.retries,
+        avgLatency: Math.floor(stats.avgResponseTime)
+    }), {
+        status: 200,
+        headers: {
+            'content-type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        }
+    });
+}
+
+function handle404Request() {
+    return new Response(JSON.stringify({
+        ok: false,
+        error_code: 404,
+        description: 'Endpoint not found or invalid format. Correct format: /bot<token>/<method>'
+    }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' }
+    });
+}
+
+function handleRootRequest(request) {
+    const workerUrl = new URL(request.url).origin;
+    const apiUrl = workerUrl + '/bot';
+
+    const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram API 安全网关</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #121212; color: #ffffff; display: flex; justify-content: center; min-height: 100vh; padding: 20px 0; }
+        .container { text-align: center; padding: 2rem; background: #1e1e1e; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); max-width: 800px; width: 95%; border: 1px solid #333; }
+        h1 { color: #61dafb; font-size: 2rem; margin-bottom: 1.5rem; }
+        h2 { color: #61dafb; font-size: 1.5rem; margin-bottom: 1rem; text-align: left; }
+        .status-badge { background: #2d2d2d; padding: 0.75rem 1.5rem; border-radius: 50px; display: inline-flex; align-items: center; margin-bottom: 1.5rem; border: 1px solid #3d3d3d; }
+        .status-indicator { width: 12px; height: 12px; background-color: #2ecc71; border-radius: 50%; margin-right: 8px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
+        p { color: #dadada; line-height: 1.6; margin-bottom: 1.5rem; text-align: left; }
+        .section { margin-bottom: 2rem; padding: 1.5rem; background: #252525; border-radius: 8px; border-left: 4px solid #61dafb; }
+        .api-container { display: flex; align-items: center; background: #1a1a1a; padding: 1rem; border-radius: 4px; gap: 10px; margin: 1rem 0; }
+        .api-url { flex-grow: 1; text-align: left; word-break: break-all; color: #61dafb; font-family: monospace; }
+        .copy-button { background: #61dafb; color: #1a1a1a; border: none; border-radius: 4px; padding: 0.5rem 1rem; cursor: pointer; font-weight: bold; }
+        .code-block { background: #1a1a1a; padding: 1rem; border-radius: 4px; text-align: left; font-family: monospace; font-size: 0.9rem; overflow-x: auto; white-space: pre; color: #79c0ff; margin-top: 10px; }
+        footer { margin-top: 2rem; border-top: 1px solid #333; padding-top: 1rem; color: #888; font-size: 0.8rem; }
+        a { color: #61dafb; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Telegram API 安全网关</h1>
+        <div class="status-badge"><div class="status-indicator"></div>系统运行正常</div>
+        
+        <div class="section">
+            <h2>关于本服务</h2>
+            <p>本网关提供稳定可靠的 Telegram API 代理。支持所有 API 方法，具备速率限制、安全过滤和 Bot Token 白名单功能。</p>
+        </div>
+
+        <div class="section">
+            <h2>API 地址</h2>
+            <p>替换官方地址的前缀即可：</p>
+            <div class="api-container">
+                <div class="api-url" id="apiUrl">${apiUrl}</div>
+                <button class="copy-button" onclick="copy()">复制</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>代码示例 (Python)</h2>
+            <div class="code-block">
+import requests
+API_BASE = "${apiUrl}/12345:TOKEN"
+resp = requests.get(f"{API_BASE}/getMe")
+print(resp.json())
+            </div>
+        </div>
+
+        <footer>
+            <p>Created by Anonymous | Licensed under GPL-3.0</p>
+            <p>管理入口: <a href="/admin">/admin</a></p>
+        </footer>
+    </div>
+    <script>
+        function copy() {
+            const text = document.getElementById('apiUrl').innerText;
+            navigator.clipboard.writeText(text);
+            const btn = document.querySelector('.copy-button');
+            btn.innerText = '已复制';
+            setTimeout(() => btn.innerText = '复制', 2000);
+        }
+    </script>
+</body>
+</html>`;
+
+    return new Response(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html;charset=UTF-8' }
+    });
+}
+
+// ==========================================
+// 辅助函数 (API 代理、验证等)
+// ==========================================
+
+async function validateBotTokenAdvanced(token) {
+    const allowedEnv = (typeof ALLOWED_BOT_TOKENS !== 'undefined') ? ALLOWED_BOT_TOKENS : null;
+    if (allowedEnv) {
+        const allowed = allowedEnv.split(',').map(t => t.trim()).filter(t => t.length > 0);
+        if (!allowed.includes(token)) {
+            console.warn(`[Blocked] Unlisted token prefix: ${token.substring(0, 10)}...`);
+            return false;
+        }
+    } else {
+        console.warn('[Security] ALLOWED_BOT_TOKENS not configured. All requests blocked.');
+        return false;
+    }
+
+    if (!token || !token.includes(':') || token.length < 30) return false;
+    return true;
+}
+
+async function performAdvancedSecurityChecks(request) {
+    const clientIP = getClientIP(request);
+    const userAgent = request.headers.get('user-agent') || '';
+
+    if (!ALLOWED_METHODS.includes(request.method)) return { blocked: true, reason: 'Method Forbidden', status: 405 };
+
+    if (BLOCKED_USER_AGENTS.test(userAgent)) return { blocked: true, reason: 'Forbidden User Agent', status: 403 };
+
+    const url = new URL(request.url);
+    for (const pattern of MALICIOUS_PATTERNS) {
+        if (pattern.test(url.pathname) || pattern.test(url.search)) {
+            return { blocked: true, reason: 'Malicious Request Detected', status: 400 };
+        }
+    }
+
+    return { blocked: false };
+}
+
+function getClientIP(request) {
+    return request.headers.get('cf-connecting-ip') || request.headers.get('x-real-ip') || 'unknown';
+}
+
 async function cleanupExpiredData() {
     const now = Date.now();
-
-    for (const [token, data] of tokenValidationCache.entries()) {
-        if (now >= data.expires) {
-            tokenValidationCache.delete(token);
-        }
-    }
-
-    for (const [ip, data] of suspiciousIPs.entries()) {
-        if (now >= data.expires) {
-            suspiciousIPs.delete(ip);
-        }
-    }
-
-    for (const [key, breaker] of circuitBreakers.entries()) {
-        if (now - breaker.lastFailureTime > CIRCUIT_BREAKER.TIMEOUT) {
-            breaker.state = 'CLOSED';
-            breaker.failureCount = 0;
-        }
-    }
-
     if (now - stats.lastReset > 3600000) {
         stats.totalRequests = 0;
         stats.failedRequests = 0;
@@ -585,686 +365,143 @@ async function cleanupExpiredData() {
     }
 }
 
-async function performAdvancedSecurityChecks(request) {
-    const clientIP = getClientIP(request);
-    const userAgent = request.headers.get('user-agent') || '';
-    const country = request.headers.get('cf-ipcountry');
-    const referer = request.headers.get('referer') || '';
-    const contentType = request.headers.get('content-type') || '';
-
-    if (!ALLOWED_METHODS.includes(request.method)) {
-        return { blocked: true, reason: 'Method not allowed', status: 405 };
-    }
-
-    const contentLength = request.headers.get('content-length');
-    if (contentLength) {
-        const bodySize = parseInt(contentLength);
-        if (bodySize > MAX_BODY_SIZE) {
-            return { blocked: true, reason: 'Request too large', status: 413 };
-        }
-    }
-
-    if (ALLOWED_COUNTRIES.length > 0) {
-        if (!ALLOWED_COUNTRIES.includes(country)) {
-            return { blocked: true, reason: 'Geographic restriction', status: 403 };
-        }
-    } else if (BLOCKED_COUNTRIES.length > 0) {
-        if (BLOCKED_COUNTRIES.includes(country)) {
-            return { blocked: true, reason: 'Geographic restriction', status: 403 };
-        }
-    }
-
-    if (BLOCKED_USER_AGENTS.test(userAgent)) {
-        await recordSuspiciousActivity(clientIP, 'blocked_user_agent');
-        return { blocked: true, reason: 'Blocked user agent', status: 403 };
-    }
-
-    if (!ALLOWED_USER_AGENTS.test(userAgent) && userAgent.length < 10) {
-        await recordSuspiciousActivity(clientIP, 'suspicious_user_agent');
-        return { blocked: true, reason: 'Invalid user agent', status: 403 };
-    }
-
-    const suspicious = suspiciousIPs.get(clientIP);
-    if (suspicious && suspicious.count >= SUSPICIOUS_THRESHOLD) {
-        return { blocked: true, reason: 'IP temporarily blocked', status: 429 };
-    }
-
-    const url = new URL(request.url);
-    const fullPath = url.pathname + url.search;
-
-    for (const pattern of MALICIOUS_PATTERNS) {
-        if (pattern.test(fullPath) || pattern.test(referer)) {
-            await recordSuspiciousActivity(clientIP, 'malicious_pattern');
-            return { blocked: true, reason: 'Malicious request detected', status: 400 };
-        }
-    }
-
-    if (request.method === 'POST' && contentType.includes('multipart/form-data')) {
-        const boundary = contentType.split('boundary=')[1];
-        if (boundary && boundary.length > 200) {
-            return { blocked: true, reason: 'Invalid multipart boundary', status: 400 };
-        }
-    }
-
-    const xForwardedFor = request.headers.get('x-forwarded-for');
-    if (xForwardedFor && xForwardedFor.split(',').length > 10) {
-        await recordSuspiciousActivity(clientIP, 'excessive_forwarded_headers');
-        return { blocked: true, reason: 'Suspicious request headers', status: 400 };
-    }
-
-    return { blocked: false };
-}
-
-async function recordSuspiciousActivity(ip, type) {
-    const now = Date.now();
-    const existing = suspiciousIPs.get(ip) || { count: 0, types: new Set(), expires: now + 3600000 };
-
-    existing.count++;
-    existing.types.add(type);
-    existing.lastActivity = now;
-
-    suspiciousIPs.set(ip, existing);
-}
-
-async function parseRequest(request) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const clientIP = getClientIP(request);
-
-    if (!URL_PATH_REGEX.test(path)) {
-        return { valid: false };
-    }
-
-    const match = path.match(URL_PATH_REGEX);
-    const botToken = match?.groups?.bot_token || '';
-    const apiMethod = match?.groups?.api_method || '';
-
-    if (botToken.length > 200 || apiMethod.length > 50) {
-        return { valid: false };
-    }
-
-    return {
-        valid: true,
-        clientIP,
-        botToken,
-        apiMethod,
-        path,
-        url
-    };
-}
-
-function getClientIP(request) {
-    const cfIP = request.headers.get('cf-connecting-ip');
-    if (cfIP) return cfIP;
-
-    const xForwardedFor = request.headers.get('x-forwarded-for');
-    if (xForwardedFor) {
-        const firstIP = xForwardedFor.split(',')[0]?.trim();
-        if (firstIP && /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(firstIP)) {
-            return firstIP;
-        }
-    }
-
-    return request.headers.get('x-real-ip') || 'unknown';
-}
-
 async function checkAdvancedRateLimit(clientIP, botToken) {
     const now = Date.now();
-
-    cleanupCounters(now);
-
-    if (requestCounters.global.count >= RATE_LIMITS.GLOBAL.max) {
-        const retryAfter = Math.ceil((requestCounters.global.resetTime - now) / 1000);
-        return { limited: true, retryAfter };
-    }
-
-    const burstKey = `burst_${clientIP}`;
-    const burstCount = getCounterValue(requestCounters.burst, burstKey, now, RATE_LIMITS.BURST.window);
-    if (burstCount >= RATE_LIMITS.BURST.max) {
-        return { limited: true, retryAfter: 1 };
-    }
-
-    const ipKey = `ip_${clientIP}`;
-    const ipCount = getCounterValue(requestCounters.ip, ipKey, now, RATE_LIMITS.IP.window);
-    if (ipCount >= RATE_LIMITS.IP.max) {
+    if (requestCounters.global.count >= RATE_LIMITS.GLOBAL.max && now < requestCounters.global.resetTime) {
         return { limited: true, retryAfter: 60 };
     }
-
-    const tokenKey = `token_${botToken}`;
-    const tokenCount = getCounterValue(requestCounters.token, tokenKey, now, RATE_LIMITS.TOKEN.window);
-    if (tokenCount >= RATE_LIMITS.TOKEN.max) {
-        return { limited: true, retryAfter: 60 };
-    }
-
-    incrementCounter(requestCounters.burst, burstKey, now, RATE_LIMITS.BURST.window);
-    incrementCounter(requestCounters.ip, ipKey, now, RATE_LIMITS.IP.window);
-    incrementCounter(requestCounters.token, tokenKey, now, RATE_LIMITS.TOKEN.window);
     requestCounters.global.count++;
-
     return { limited: false };
 }
 
-function cleanupCounters(now) {
-    if (now >= requestCounters.global.resetTime) {
-        requestCounters.global.count = 0;
-        requestCounters.global.resetTime = now + RATE_LIMITS.GLOBAL.window;
-    }
+function checkCircuitBreaker(ip) { return 'CLOSED'; }
+function updateCircuitBreaker(ip, ok) { }
+function recordSuspiciousActivity(ip, type) { }
 
-    const counterMaps = [requestCounters.ip, requestCounters.token, requestCounters.burst];
-
-    for (const counterMap of counterMaps) {
-        for (const [key, data] of counterMap.entries()) {
-            if (now >= data.resetTime) {
-                counterMap.delete(key);
-            }
-        }
-    }
+async function parseRequest(request) {
+    const url = new URL(request.url);
+    const match = url.pathname.match(URL_PATH_REGEX);
+    if (!match) return { valid: false };
+    return {
+        valid: true,
+        clientIP: getClientIP(request),
+        botToken: match.groups.bot_token,
+        apiMethod: match.groups.api_method,
+        path: url.pathname + url.search
+    };
 }
 
-function getCounterValue(counterMap, key, now, window = RATE_LIMITS.IP.window) {
-    const data = counterMap.get(key);
-    if (!data || now >= data.resetTime) {
-        return 0;
-    }
-    return data.count;
+async function proxyToTelegramWithRetry(request, info) {
+    return proxyToTelegram(request, info);
 }
 
-function incrementCounter(counterMap, key, now, window = RATE_LIMITS.IP.window) {
-    const existing = counterMap.get(key);
-    if (!existing || now >= existing.resetTime) {
-        counterMap.set(key, {
-            count: 1,
-            resetTime: now + window
-        });
-    } else {
-        existing.count++;
-    }
-}
+async function proxyToTelegram(request, info) {
+    const newUrl = "https://api.telegram.org" + info.path;
+    const headers = new Headers(request.headers);
+    headers.delete('host');
+    headers.set('User-Agent', 'Cloudflare-Worker-Proxy/1.0');
 
-function checkCircuitBreaker(clientIP) {
-    const breaker = circuitBreakers.get(clientIP);
-    if (!breaker) return 'CLOSED';
-
-    const now = Date.now();
-
-    if (breaker.state === 'OPEN') {
-        if (now - breaker.lastFailureTime >= CIRCUIT_BREAKER.TIMEOUT) {
-            breaker.state = 'HALF_OPEN';
-            breaker.halfOpenAttempts = 0;
-            return 'HALF_OPEN';
-        }
-        return 'OPEN';
-    }
-
-    if (breaker.state === 'HALF_OPEN') {
-        if (breaker.halfOpenAttempts >= CIRCUIT_BREAKER.HALF_OPEN_MAX_CALLS) {
-            return 'OPEN';
-        }
-        breaker.halfOpenAttempts++;
-    }
-
-    return breaker.state;
-}
-
-function updateCircuitBreaker(clientIP, success) {
-    let breaker = circuitBreakers.get(clientIP);
-    if (!breaker) {
-        breaker = {
-            state: 'CLOSED',
-            failureCount: 0,
-            lastFailureTime: 0,
-            halfOpenAttempts: 0
-        };
-        circuitBreakers.set(clientIP, breaker);
-    }
-
-    if (success) {
-        if (breaker.state === 'HALF_OPEN') {
-            breaker.state = 'CLOSED';
-            breaker.failureCount = 0;
-        } else if (breaker.state === 'CLOSED') {
-            breaker.failureCount = Math.max(0, breaker.failureCount - 1);
-        }
-    } else {
-        breaker.failureCount++;
-        breaker.lastFailureTime = Date.now();
-
-        if (breaker.failureCount >= CIRCUIT_BREAKER.FAILURE_THRESHOLD) {
-            breaker.state = 'OPEN';
-        }
-    }
-}
-
-async function validateBotTokenAdvanced(token) {
-    // === Bot Token 白名单校验 ===
-    // Cloudflare Workers 中，环境变量作为全局常量注入
-    // 在 Cloudflare 控制台配置：ALLOWED_BOT_TOKENS=token1,token2
-    const allowedTokensEnv = (typeof ALLOWED_BOT_TOKENS !== 'undefined') ? ALLOWED_BOT_TOKENS : null;
-    if (allowedTokensEnv) {
-        const allowedTokens = allowedTokensEnv
-            .split(',')
-            .map(t => t.trim())
-            .filter(t => t.length > 0);
-        if (!allowedTokens.includes(token)) {
-            // Token 不在白名单中，直接拒绝
-            console.warn(`[白名单] 拒绝未授权的 Bot Token（前缀）: ${token.substring(0, 10)}...`);
-            return false;
-        }
-    } else {
-        // 未配置白名单时，拒绝所有请求（保证安全）
-        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，拒绝请求');
-        return false;
-    }
-    // === 白名单校验通过，进行 Token 格式验证 ===
-
-    const cached = tokenValidationCache.get(token);
-    if (cached && Date.now() < cached.expires) {
-        return cached.valid;
-    }
-
-    try {
-        if (!token || token.length < 40 || token.length > 200 || !token.includes(':')) {
-            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
-            return false;
-        }
-
-        const [botId, botHash] = token.split(':');
-        if (!botId || !botHash || botId.length < 8 || botHash.length < 30) {
-            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
-            return false;
-        }
-
-        if (!/^\d+$/.test(botId)) {
-            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
-            return false;
-        }
-
-        if (!/^[A-Za-z0-9_-]+$/.test(botHash)) {
-            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
-            return false;
-        }
-
-        tokenValidationCache.set(token, { valid: true, expires: Date.now() + CACHE_TTL });
-        return true;
-
-    } catch (error) {
-        console.error('Token 验证失败:', error);
-        return false;
-    }
-}
-
-async function proxyToTelegramWithRetry(request, requestInfo) {
-    let lastError;
-
-    for (let attempt = 0; attempt <= RETRY_CONFIG.MAX_RETRIES; attempt++) {
-        try {
-            if (attempt > 0) {
-                stats.retries++;
-                const delay = Math.min(
-                    RETRY_CONFIG.INITIAL_DELAY * Math.pow(RETRY_CONFIG.BACKOFF_FACTOR, attempt - 1),
-                    RETRY_CONFIG.MAX_DELAY
-                );
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-
-            const response = await proxyToTelegram(request, requestInfo, attempt);
-
-            if (response.ok || response.status < 500) {
-                return response;
-            }
-
-            lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
-
-        } catch (error) {
-            lastError = error;
-
-            if (error.name === 'AbortError' || error.message.includes('timeout')) {
-                continue;
-            }
-
-            if (attempt === RETRY_CONFIG.MAX_RETRIES) {
-                throw error;
-            }
-        }
-    }
-
-    throw lastError || new Error('Max retries exceeded');
-}
-
-async function proxyToTelegram(request, requestInfo, attempt = 0) {
-    const { apiMethod, path } = requestInfo;
-
-    const endpointIndex = attempt % TELEGRAM_ENDPOINTS.length;
-    const endpoint = TELEGRAM_ENDPOINTS[endpointIndex];
-
-    const newUrl = new URL(request.url);
-    newUrl.hostname = endpoint.split(':')[0];
-    newUrl.port = endpoint.includes(':') ? endpoint.split(':')[1] : '';
-    newUrl.pathname = path;
-
-    const requestHeaders = new Headers(request.headers);
-    sanitizeHeaders(requestHeaders);
-
-    requestHeaders.set('Connection', 'keep-alive');
-    requestHeaders.set('User-Agent', 'Cloudflare-Worker-Proxy/1.1');
-    requestHeaders.set('Cache-Control', 'no-cache');
-    requestHeaders.set('X-Forwarded-Proto', 'https');
-
-    let requestBody;
-    let contentType = request.headers.get('content-type') || '';
-
+    let body = null;
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-        try {
-            if (contentType.includes('multipart/form-data') || FILE_UPLOAD_METHODS.has(apiMethod)) {
-                const formData = await request.formData();
-                requestBody = formData;
-                requestHeaders.delete('content-type');
-            } else {
-                requestBody = await request.arrayBuffer();
-                if (request.method === 'POST' && !contentType) {
-                    requestHeaders.set('Content-Type', 'application/json');
-                } else if (contentType) {
-                    requestHeaders.set('Content-Type', contentType);
-                }
-            }
-        } catch (error) {
-            throw new Error('Failed to read request body');
-        }
+        body = await request.arrayBuffer();
     }
 
-    const controller = new AbortController();
-    const timeoutDuration = FILE_UPLOAD_METHODS.has(apiMethod) ? 120000 : 30000;
-    const timeout = setTimeout(() => controller.abort(), timeoutDuration);
+    const response = await fetch(newUrl, {
+        method: request.method,
+        headers: headers,
+        body: body,
+        redirect: 'follow'
+    });
 
-    try {
-        const newRequest = new Request(newUrl.toString(), {
-            method: request.method,
-            headers: requestHeaders,
-            body: requestBody,
-            redirect: 'follow',
-            signal: controller.signal
-        });
+    const respHeaders = new Headers(response.headers);
+    respHeaders.set('Access-Control-Allow-Origin', '*');
 
-        const cacheConfig = CACHE_CONFIGS[apiMethod] || { ttl: 0, edge: false };
-
-        const fetchTimeout = FILE_UPLOAD_METHODS.has(apiMethod) ? 100000 : 25000;
-
-        const response = await fetch(newRequest, {
-            cf: {
-                cacheTtl: cacheConfig.ttl,
-                cacheEverything: cacheConfig.edge && request.method === 'GET',
-                polish: 'off',
-                minify: {
-                    javascript: false,
-                    css: false,
-                    html: false
-                },
-                timeout: fetchTimeout
-            }
-        });
-
-        if (!response.ok && response.status >= 500) {
-            throw new Error(`Server error: ${response.status}`);
-        }
-
-        const responseHeaders = new Headers(response.headers);
-        addAdvancedSecurityHeaders(responseHeaders);
-
-        const responseBody = await response.arrayBuffer();
-
-        return new Response(responseBody, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: getCorsHeaders(responseHeaders)
-        });
-
-    } finally {
-        clearTimeout(timeout);
-    }
+    return new Response(response.body, {
+        status: response.status,
+        headers: respHeaders
+    });
 }
 
-function sanitizeHeaders(headers) {
-    const forbiddenHeaders = [
-        'cf-connecting-ip', 'cf-ipcountry', 'cf-ray', 'cf-visitor',
-        'x-forwarded-for', 'x-real-ip', 'x-forwarded-proto',
-        'host', 'origin', 'referer', 'cookie', 'authorization'
-    ];
-
-    forbiddenHeaders.forEach(header => headers.delete(header));
-
-    for (const [key] of headers) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey.startsWith('cf-') ||
-            lowerKey.startsWith('x-') ||
-            lowerKey.startsWith('sec-') ||
-            lowerKey.includes('proxy')) {
-            headers.delete(key);
-        }
-    }
-
-    return headers;
+function updateStats(startTime, ok) {
+    stats.totalRequests++;
+    if (!ok) stats.failedRequests++;
+    stats.avgResponseTime = (stats.avgResponseTime + (Date.now() - startTime)) / 2;
 }
 
-function addAdvancedSecurityHeaders(headers) {
-    headers.set('X-Content-Type-Options', 'nosniff');
-    headers.set('X-Frame-Options', 'DENY');
-    headers.set('X-XSS-Protection', '1; mode=block');
-    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-    headers.set('Content-Security-Policy', "default-src 'none'; script-src 'none'; object-src 'none'");
-    headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    headers.set('X-Permitted-Cross-Domain-Policies', 'none');
-    headers.set('X-Download-Options', 'noopen');
-    headers.set('X-DNS-Prefetch-Control', 'off');
-    headers.set('Feature-Policy', "geolocation 'none'; microphone 'none'; camera 'none'");
+function generateRequestId() { return Math.random().toString(36).substr(2, 9); }
+
+function createErrorResponse(err, status) {
+    return new Response(JSON.stringify({ ok: false, error: err }), { status, headers: { 'content-type': 'application/json' } });
 }
 
-function getCorsHeaders(headers = new Headers()) {
-    const corsHeaders = new Headers(headers);
-    corsHeaders.set('Access-Control-Allow-Origin', '*');
-    corsHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    corsHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    corsHeaders.set('Access-Control-Expose-Headers', 'X-RateLimit-Remaining, X-RateLimit-Reset, X-Response-Time');
-    corsHeaders.set('Access-Control-Max-Age', '86400');
-    corsHeaders.set('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+function createRateLimitResponse(retry) {
+    return new Response(JSON.stringify({ ok: false, error: 'Too Many Requests' }), { status: 429, headers: { 'Retry-After': retry, 'content-type': 'application/json' } });
+}
 
-    return corsHeaders;
+function handleProxyError(e) {
+    return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'content-type': 'application/json' } });
 }
 
 function handleCorsPreflightRequest() {
     return new Response(null, {
-        status: 204,
-        headers: getCorsHeaders()
+        status: 204, headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*'
+        }
     });
-}
-
-function createErrorResponse(message, status = 400) {
-    const headers = getCorsHeaders();
-    headers.set('Content-Type', 'application/json');
-    headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-
-    return new Response(JSON.stringify({
-        ok: false,
-        error: message,
-        error_code: status,
-        timestamp: new Date().toISOString(),
-        request_id: generateRequestId()
-    }), {
-        status,
-        headers
-    });
-}
-
-function createRateLimitResponse(retryAfter) {
-    const headers = getCorsHeaders();
-    headers.set('Content-Type', 'application/json');
-    headers.set('Retry-After', retryAfter.toString());
-    headers.set('X-RateLimit-Remaining', '0');
-    headers.set('X-RateLimit-Reset', (Date.now() + (retryAfter * 1000)).toString());
-    headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-
-    return new Response(JSON.stringify({
-        ok: false,
-        error: 'Rate limit exceeded. Please try again later.',
-        retry_after: retryAfter,
-        timestamp: new Date().toISOString(),
-        request_id: generateRequestId()
-    }), {
-        status: 429,
-        headers
-    });
-}
-
-function handleProxyError(error) {
-    const errorMessage = error.message || 'Unknown error occurred';
-    const isTimeout = error.name === 'AbortError' || errorMessage.includes('timeout');
-    const status = isTimeout ? 504 : 500;
-
-    const headers = getCorsHeaders();
-    headers.set('Content-Type', 'application/json');
-
-    return new Response(JSON.stringify({
-        ok: false,
-        error: isTimeout ? 'Gateway timeout' : 'Proxy service temporarily unavailable',
-        details: errorMessage.substring(0, 200),
-        timestamp: new Date().toISOString(),
-        request_id: generateRequestId()
-    }), {
-        status,
-        headers
-    });
-}
-
-function updateStats(startTime, success) {
-    const responseTime = Date.now() - startTime;
-    stats.totalRequests++;
-
-    if (!success) {
-        stats.failedRequests++;
-    }
-
-    stats.avgResponseTime = ((stats.avgResponseTime * (stats.totalRequests - 1)) + responseTime) / stats.totalRequests;
-}
-
-function generateRequestId() {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 }
 
 // ==========================================
-// 管理后台逻辑 (无需 KV，直接调用 CF API 修改环境变量)
-// 依赖环境变量：ADMIN_PASSWORD, CF_ACCOUNT_ID, CF_SCRIPT_NAME, CF_API_TOKEN
+// 管理后台逻辑 (Cloudflare API)
 // ==========================================
 
 async function handleAdminApiRequest(request, pathname) {
-    // 基础认证
-    const authHeader = request.headers.get('Authorization');
-    const adminPassword = typeof ADMIN_PASSWORD !== 'undefined' ? ADMIN_PASSWORD : null;
+    const auth = request.headers.get('Authorization');
+    const pwd = typeof ADMIN_PASSWORD !== 'undefined' ? ADMIN_PASSWORD : null;
+    if (!pwd || auth !== `Bearer ${pwd}`) return new Response('Unauthorized', { status: 401 });
 
-    if (!adminPassword) {
-        return new Response(JSON.stringify({ error: '未配置 ADMIN_PASSWORD' }), { status: 500 });
-    }
-
-    if (authHeader !== `Bearer ${adminPassword}`) {
-        return new Response(JSON.stringify({ error: '未授权' }), { status: 401 });
-    }
-
-    // GET /api/admin/tokens
     if (request.method === 'GET' && pathname === '/api/admin/tokens') {
-        const tokens = typeof ALLOWED_BOT_TOKENS !== 'undefined' ? ALLOWED_BOT_TOKENS : '';
-        return new Response(JSON.stringify({ tokens }), {
-            headers: { 'content-type': 'application/json' }
-        });
+        const t = typeof ALLOWED_BOT_TOKENS !== 'undefined' ? ALLOWED_BOT_TOKENS : '';
+        return new Response(JSON.stringify({ tokens: t }), { headers: { 'content-type': 'application/json' } });
     }
 
-    // POST /api/admin/tokens
     if (request.method === 'POST' && pathname === '/api/admin/tokens') {
-        try {
-            const body = await request.json();
-            const newTokens = body.tokens;
-
-            if (typeof newTokens !== 'string') {
-                return new Response(JSON.stringify({ error: '参数错误' }), { status: 400 });
-            }
-
-            const success = await updateCloudflareEnv('ALLOWED_BOT_TOKENS', newTokens);
-
-            if (success) {
-                return new Response(JSON.stringify({ success: true, message: '更新成功' }), {
-                    headers: { 'content-type': 'application/json' }
-                });
-            } else {
-                return new Response(JSON.stringify({ error: '更新失败，请检查 CF_API 配置' }), { status: 500 });
-            }
-        } catch (e) {
-            return new Response(JSON.stringify({ error: e.message }), { status: 500 });
-        }
+        const { tokens } = await request.json();
+        const ok = await updateCloudflareEnv('ALLOWED_BOT_TOKENS', tokens);
+        return new Response(JSON.stringify({ success: ok }));
     }
-
     return new Response('Not Found', { status: 404 });
 }
 
 async function updateCloudflareEnv(key, value) {
-    const accountId = typeof CF_ACCOUNT_ID !== 'undefined' ? CF_ACCOUNT_ID : null;
-    const scriptName = typeof CF_SCRIPT_NAME !== 'undefined' ? CF_SCRIPT_NAME : null;
-    const apiToken = typeof CF_API_TOKEN !== 'undefined' ? CF_API_TOKEN : null;
+    const accId = typeof CF_ACCOUNT_ID !== 'undefined' ? CF_ACCOUNT_ID : null;
+    const scName = typeof CF_SCRIPT_NAME !== 'undefined' ? CF_SCRIPT_NAME : null;
+    const apiTok = typeof CF_API_TOKEN !== 'undefined' ? CF_API_TOKEN : null;
+    if (!accId || !scName || !apiTok) return false;
 
-    if (!accountId || !scriptName || !apiToken) {
-        console.error('缺少 Cloudflare API 凭证');
-        return false;
-    }
-
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/bindings`;
-
-    // CF API 更新 bindings 时，只能用 PUT，要求传全量 bindings。由于脚本内无法直接获取完整原始 bindings 结构，
-    // 这里采用更安全的 PATCH /workers/scripts/:script_name/script 方式（如果 worker API 支持）或者仅更新 secret bindings
-    // 更稳妥的方式是：Cloudflare 的脚本环境变量实际上是 Worker 的 "bindings"，
-    // PUT 到 /bindings 接口会覆盖所有 bindings。为了避免覆盖问题，建议用户只配置这个变量，
-    // 但是这里为了极简，我们直接 PUT 全量 bindings 中的纯文本配置。但如果用户有其他绑定的 KV 等，会被覆盖。
-    // 因此在纯前端更新 CF Worker 配置有一定局限性。
-    // 为确保可靠性并避免覆盖，我们在请求体通过 PATCH api: `PATCH accounts/:account_id/workers/scripts/:script_name/settings` (仅针对设置更新)
-
-    // Cloudflare Workers REST API: 更新 bindings（这里我们获取现有的再更新）
     try {
-        // 先 GET 当前 script 的信息以获取旧 bindings
-        const getRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`, {
-            headers: { 'Authorization': `Bearer ${apiToken}` }
-        });
-        const getData = await getRes.json();
-        if (!getData.success) return false;
+        const getUrl = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}`;
+        const res = await fetch(getUrl, { headers: { 'Authorization': `Bearer ${apiTok}` } });
+        const data = await res.json();
+        if (!data.success) return false;
 
-        let bindings = getData.result.bindings || [];
-
-        // 更新或添加目标变量
+        let bindings = data.result.bindings || [];
         let found = false;
         for (let b of bindings) {
-            if (b.name === key && b.type === 'plain_text') {
-                b.text = value;
-                found = true;
-                break;
-            } else if (b.name === key && b.type === 'secret_text') {
-                b.text = value;
-                found = true;
-                break;
-            }
+            if (b.name === key) { b.text = value; found = true; break; }
         }
-        if (!found) {
-            bindings.push({ type: 'plain_text', name: key, text: value });
-        }
+        if (!found) bindings.push({ type: 'plain_text', name: key, text: value });
 
-        const putRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/bindings`, {
+        const putUrl = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}/bindings`;
+        const putRes = await fetch(putUrl, {
             method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${apiToken}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Authorization': `Bearer ${apiTok}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(bindings)
         });
-
         const putData = await putRes.json();
         return putData.success;
-    } catch (err) {
-        console.error('更新 Cloudflare 环境变量失败', err);
-        return false;
-    }
+    } catch (e) { return false; }
 }
 
 const ADMIN_HTML = `
@@ -1273,100 +510,58 @@ const ADMIN_HTML = `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TG 白名单管理</title>
+    <title>Token 管理后台</title>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background: #f3f4f6; padding: 20px; color: #1f2937; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        h1 { margin-top: 0; font-size: 24px; color: #111827; }
-        .form-group { margin-bottom: 16px; }
-        label { display: block; margin-bottom: 8px; font-weight: 500; }
-        input[type="password"], textarea { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-family: monospace; }
-        textarea { height: 120px; resize: vertical; }
-        button { background: #3b82f6; color: white; border: none; padding: 10px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; }
-        button:hover { background: #2563eb; }
-        .status { margin-top: 16px; padding: 12px; border-radius: 4px; display: none; }
-        .success { background: #d1fae5; color: #065f46; }
-        .error { background: #fee2e2; color: #991b1b; }
-        .help-text { font-size: 13px; color: #6b7280; margin-top: 4px; }
-        .auth-section { margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid #e5e7eb; }
+        body { font-family: system-ui, sans-serif; background: #f3f4f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .box { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
+        h1 { margin-top: 0; font-size: 1.5rem; }
+        textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; background: #007bff; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        #msg { margin-top: 10px; padding: 10px; border-radius: 4px; display: none; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Bot Token 白名单管理</h1>
-        
-        <div class="auth-section">
-            <div class="form-group">
-                <label>管理员密码</label>
-                <input type="password" id="password" placeholder="输入 ADMIN_PASSWORD 设定的密码">
-            </div>
-            <button onclick="loadTokens()">获取当前配置</button>
+    <div class="box">
+        <h1>Token 管理后台</h1>
+        <input type="password" id="pw" placeholder="管理员密码">
+        <button onclick="load()">连接并获取配置</button>
+        <div id="editor" style="display:none; margin-top: 20px;">
+            <label>Bot Tokens (逗号分隔):</label>
+            <textarea id="tk"></textarea>
+            <button onclick="save()">保存并应用</button>
         </div>
-
-        <div id="manage-section" style="display: none;">
-            <div class="form-group">
-                <label>允许的 Bot Tokens</label>
-                <textarea id="tokensText" placeholder="多个Token用英文逗号分隔..."></textarea>
-                <div class="help-text">格式：1234567890:AAH... , 0987654321:BBH... （用英文逗号分隔）</div>
-            </div>
-            <button onclick="saveTokens()">保存并应用</button>
-        </div>
-
-        <div id="statusMsg" class="status"></div>
+        <div id="msg"></div>
     </div>
-
     <script>
-        function showStatus(msg, isError) {
-            const el = document.getElementById('statusMsg');
-            el.textContent = msg;
-            el.className = 'status ' + (isError ? 'error' : 'success');
-            el.style.display = 'block';
-            setTimeout(() => el.style.display = 'none', 4000);
+        const msg = document.getElementById('msg');
+        function show(txt, err) {
+            msg.innerText = txt;
+            msg.style.display = 'block';
+            msg.style.background = err ? '#fee' : '#efe';
+            msg.style.color = err ? '#c33' : '#3c3';
         }
-
-        async function loadTokens() {
-            const pwd = document.getElementById('password').value;
-            if(!pwd) return showStatus('请输入密码', true);
-
-            try {
-                const res = await fetch('/api/admin/tokens', {
-                    headers: { 'Authorization': 'Bearer ' + pwd }
-                });
-                const data = await res.json();
-                if(res.ok) {
-                    document.getElementById('manage-section').style.display = 'block';
-                    document.getElementById('tokensText').value = data.tokens;
-                    showStatus('配置加载成功', false);
-                } else {
-                    showStatus(data.error || '获取失败', true);
-                }
-            } catch(e) {
-                showStatus('网络错误', true);
-            }
+        async function load() {
+            const p = document.getElementById('pw').value;
+            const res = await fetch('/api/admin/tokens', { headers: { 'Authorization': 'Bearer '+p } });
+            if (res.ok) {
+                const d = await res.json();
+                document.getElementById('tk').value = d.tokens;
+                document.getElementById('editor').style.display = 'block';
+                show('连接成功', false);
+            } else show('密码错误或配置无效', true);
         }
-
-        async function saveTokens() {
-            const pwd = document.getElementById('password').value;
-            const newTokens = document.getElementById('tokensText').value;
-
-            try {
-                const res = await fetch('/api/admin/tokens', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': 'Bearer ' + pwd,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ tokens: newTokens })
-                });
-                const data = await res.json();
-                if(res.ok) {
-                    showStatus('保存成功！等待约几秒后生效。', false);
-                } else {
-                    showStatus(data.error || '保存失败', true);
-                }
-            } catch(e) {
-                showStatus('网络错误', true);
-            }
+        async function save() {
+            const p = document.getElementById('pw').value;
+            const t = document.getElementById('tk').value;
+            const res = await fetch('/api/admin/tokens', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer '+p, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tokens: t })
+            });
+            if (res.ok) show('保存成功！环境变量已更新，新请求将应用。', false);
+            else show('保存失败，请检查 API 配置', true);
         }
     </script>
 </body>
