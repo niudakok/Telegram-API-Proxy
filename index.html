@@ -1,48 +1,48 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram API Secure Gateway</title>
+    <title>Telegram API 安全网关</title>
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Telegram API Secure Gateway</h1>
+            <h1>Telegram API 安全网关</h1>
             <div class="status-badge">
                 <div class="status-indicator"></div>
-                <span>System is Active</span>
+                <span>系统运行正常</span>
             </div>
         </header>
 
         <section class="info-section">
-            <h2>About This Service</h2>
-            <p>Welcome to the Telegram API Secure Proxy Service. This gateway provides stable and reliable access to the Telegram API in regions where it may be restricted.</p>
+            <h2>关于本服务</h2>
+            <p>欢迎使用 Telegram API 安全代理服务。本网关为网络受限地区提供稳定可靠的 Telegram API 访问，无需 VPN 即可使用所有 Telegram Bot API 功能。</p>
             
             <div class="features">
-                <h3>Features:</h3>
+                <h3>功能特点：</h3>
                 <ul>
-                    <li>Unlimited users and API requests</li>
-                    <li>100% stability against network restrictions</li>
-                    <li>Secure data transmission</li>
+                    <li>支持所有 Telegram Bot API 方法</li>
+                    <li>高可用性，抗网络波动</li>
+                    <li>数据传输安全加密</li>
                 </ul>
             </div>
         </section>
 
         <section class="usage-section">
-            <h2>How to Use</h2>
-            <p>Replace the standard Telegram API address with the following URL:</p>
+            <h2>使用方法</h2>
+            <p>将标准 Telegram API 地址替换为以下代理地址：</p>
             
             <div class="api-container">
                 <div class="api-url" id="apiUrl">https://telegram-api-proxy-anonymous.pages.dev/api/bot</div>
-                <button class="copy-button" onclick="copyToClipboard()">Copy URL</button>
+                <button class="copy-button" onclick="copyToClipboard()">复制地址</button>
             </div>
         </section>
 
         <section class="code-examples">
-            <h2>Code Examples</h2>
+            <h2>代码示例</h2>
             
             <div class="code-tabs">
                 <button class="tab-button active" onclick="switchTab('js')">JavaScript</button>
@@ -52,9 +52,9 @@
             <div class="tab-content active" id="js-tab">
                 <pre><code class="language-javascript">
 const Http = new XMLHttpRequest();
-let botToken = "YOUR_BOT_TOKEN"
-let ChatID = "YOUR_CHAT_ID"
-let txtmessage = "Hello from Secure API"
+let botToken = "你的_BOT_TOKEN"
+let ChatID = "目标_CHAT_ID"
+let txtmessage = "来自代理的 Hello"
 
 var url = 'https://telegram-api-proxy-anonymous.pages.dev/api/bot' + botToken + 
           '/sendMessage?text=' + txtmessage + 
@@ -66,7 +66,7 @@ Http.send();
 
 Http.onreadystatechange = function() {
     if(this.readyState == 4 && this.status == 200) {
-        console.log("Message sent successfully");
+        console.log("消息发送成功");
     }
 }
                 </code></pre>
@@ -77,8 +77,8 @@ Http.onreadystatechange = function() {
 import requests
 
 def send_telegram_msg(msg):
-    token = "YOUR_BOT_TOKEN"
-    chat_id = "YOUR_CHAT_ID"
+    token = "你的_BOT_TOKEN"
+    chat_id = "目标_CHAT_ID"
     url = "https://telegram-api-proxy-anonymous.pages.dev/api/bot" + token + "/sendMessage"
     
     payload = {
@@ -88,19 +88,19 @@ def send_telegram_msg(msg):
         "disable_web_page_preview": True
     }
     
-    response = requests.get(url, params=payload)
+    response = requests.post(url, json=payload)
     return response.json()
 
-user_msg = input("Please enter your message: ")
+user_msg = input("请输入要发送的消息：")
 result = send_telegram_msg(user_msg)
-print("Message sent successfully!")
+print("消息发送成功！")
                 </code></pre>
             </div>
         </section>
 
         <footer>
-            <p>Created by: <a href="https://t.me/BXAMbot" target="_blank">Anonymous</a></p>
-            <p>License: <a href="https://github.com/username/Telegram-API-Proxy/blob/main/LICENSE" target="_blank">GPL-3.0</a></p>
+            <p>创建者：<a href="https://t.me/BXAMbot" target="_blank">Anonymous</a></p>
+            <p>许可证：<a href="https://github.com/username/Telegram-API-Proxy/blob/main/LICENSE" target="_blank">GPL-3.0</a></p>
         </footer>
     </div>
 

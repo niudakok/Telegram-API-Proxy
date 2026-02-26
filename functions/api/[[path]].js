@@ -35,7 +35,7 @@ const SUSPICIOUS_THRESHOLD = 10;
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
 const MAX_BODY_SIZE = 50 * 1024 * 1024;
-const ALLOWED_COUNTRIES = ['IR'];
+const ALLOWED_COUNTRIES = []; // 已去除国家限制，允许所有地区访问
 const BLOCKED_COUNTRIES = [];
 const ALLOWED_USER_AGENTS = /telegram|bot|curl|postman|httpie|axios|fetch/i;
 const BLOCKED_USER_AGENTS = /scanner|crawler|spider|bot.*attack|sqlmap|nikto|nmap/i;
@@ -433,6 +433,26 @@ function updateCircuitBreaker(clientIP, success) {
 }
 
 async function validateBotTokenAdvanced(token, env) {
+    // === Bot Token 白名单校验 ===
+    // 读取环境变量 ALLOWED_BOT_TOKENS（多个 Token 用英文逗号分隔）
+    // 示例：ALLOWED_BOT_TOKENS=1234567890:AABBcc,9876543210:ZZYYxx
+    if (env && env.ALLOWED_BOT_TOKENS) {
+        const allowedTokens = env.ALLOWED_BOT_TOKENS
+            .split(',')
+            .map(t => t.trim())
+            .filter(t => t.length > 0);
+        if (!allowedTokens.includes(token)) {
+            // Token 不在白名单中，直接拒绝，不缓存结果
+            console.warn(`[白名单] 拒绝未授权的 Bot Token（前缀）: ${token.substring(0, 10)}...`);
+            return false;
+        }
+    } else {
+        // 未配置白名单时，拒绝所有请求（保证安全）
+        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，拒绝请求');
+        return false;
+    }
+    // === 白名单校验通过，进行 Token 格式验证 ===
+
     const cached = tokenValidationCache.get(token);
     if (cached && Date.now() < cached.expires) {
         return cached.valid;
@@ -464,7 +484,7 @@ async function validateBotTokenAdvanced(token, env) {
         return true;
         
     } catch (error) {
-        console.error('Token validation error:', error);
+        console.error('Token 验证失败:', error);
         return false;
     }
 }

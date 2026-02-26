@@ -37,7 +37,7 @@ const SUSPICIOUS_THRESHOLD = 10;
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
 const MAX_BODY_SIZE = 50 * 1024 * 1024;
-const ALLOWED_COUNTRIES = ['IR'];
+const ALLOWED_COUNTRIES = []; // 已去除国家限制，允许所有地区访问
 const BLOCKED_COUNTRIES = [];
 const ALLOWED_USER_AGENTS = /telegram|bot|curl|postman|httpie|axios|fetch/i;
 const BLOCKED_USER_AGENTS = /scanner|crawler|spider|bot.*attack|sqlmap|nikto|nmap/i;
@@ -79,52 +79,52 @@ const MALICIOUS_PATTERNS = [
 ];
 
 const FILE_UPLOAD_METHODS = new Set([
-    'sendPhoto', 'sendDocument', 'sendVideo', 'sendAudio', 
-    'sendVoice', 'sendAnimation', 'sendSticker', 'sendVideoNote', 
+    'sendPhoto', 'sendDocument', 'sendVideo', 'sendAudio',
+    'sendVoice', 'sendAnimation', 'sendSticker', 'sendVideoNote',
     'sendMediaGroup', 'setChatPhoto', 'uploadStickerFile',
     'createNewStickerSet', 'addStickerToSet', 'setStickerSetThumb'
 ]);
 
 let stats = {
-  startTime: Date.now(),
-  totalRequests: 0,
-  successfulRequests: 0,
-  failedRequests: 0,
-  rateLimited: 0,
-  blocked: 0,
-  retries: 0,
-  avgResponseTime: 0,
-  lastReset: Date.now()
+    startTime: Date.now(),
+    totalRequests: 0,
+    successfulRequests: 0,
+    failedRequests: 0,
+    rateLimited: 0,
+    blocked: 0,
+    retries: 0,
+    avgResponseTime: 0,
+    lastReset: Date.now()
 };
 
 function handleStatsRequest() {
-  const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
-  const successfulRequests = stats.totalRequests - stats.failedRequests - stats.blocked - stats.rateLimited;
-  
-  return new Response(JSON.stringify({
-    ok: true,
-    uptime,
-    totalRequests: stats.totalRequests,
-    successfulRequests: successfulRequests,
-    failedRequests: stats.failedRequests,
-    rateLimited: stats.rateLimited,
-    blocked: stats.blocked,
-    retries: stats.retries,
-    avgLatency: Math.floor(stats.avgResponseTime)
-  }), {
-    status: 200,
-    headers: { 
-      'content-type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
-    }
-  });
+    const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
+    const successfulRequests = stats.totalRequests - stats.failedRequests - stats.blocked - stats.rateLimited;
+
+    return new Response(JSON.stringify({
+        ok: true,
+        uptime,
+        totalRequests: stats.totalRequests,
+        successfulRequests: successfulRequests,
+        failedRequests: stats.failedRequests,
+        rateLimited: stats.rateLimited,
+        blocked: stats.blocked,
+        retries: stats.retries,
+        avgLatency: Math.floor(stats.avgResponseTime)
+    }), {
+        status: 200,
+        headers: {
+            'content-type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        }
+    });
 }
 
 function handleRootRequest(request) {
-  const workerUrl = new URL(request.url).origin;
-  const apiUrl = workerUrl + '/bot';
-  
-  const html = `<!DOCTYPE html>
+    const workerUrl = new URL(request.url).origin;
+    const apiUrl = workerUrl + '/bot';
+
+    const html = `<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
@@ -446,121 +446,121 @@ function handleRootRequest(request) {
     </script>
 </body>
 </html>`;
-  
-  return new Response(html, {
-    status: 200,
-    headers: {
-      'content-type': 'text/html;charset=UTF-8',
-      'Cache-Control': 'public, max-age=3600'
-    }
-  });
+
+    return new Response(html, {
+        status: 200,
+        headers: {
+            'content-type': 'text/html;charset=UTF-8',
+            'Cache-Control': 'public, max-age=3600'
+        }
+    });
 }
 
 async function handle404Request() {
-  return new Response(JSON.stringify({
-    ok: false,
-    error_code: 404,
-    description: 'Invalid endpoint. Please check Telegram Bot API documentation.'
-  }), {
-    status: 404,
-    headers: { 'content-type': 'application/json' }
-  });
+    return new Response(JSON.stringify({
+        ok: false,
+        error_code: 404,
+        description: 'Invalid endpoint. Please check Telegram Bot API documentation.'
+    }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' }
+    });
 }
 
 addEventListener('fetch', (event) => {
-  event.respondWith(handleRequest(event.request));
+    event.respondWith(handleRequest(event.request));
 });
 
 async function handleRequest(request) {
-  const { pathname } = new URL(request.url);
+    const { pathname } = new URL(request.url);
 
-  if (pathname === '/stats') {
-    return handleStatsRequest();
-  }
-  
-  if (pathname === '/') {
-    return handleRootRequest(request);
-  }
-
-  if (request.method === 'OPTIONS') {
-    return handleCorsPreflightRequest();
-  }
-
-  if (URL_PATH_REGEX.test(pathname)) {
-    const startTime = Date.now();
-    try {
-        await cleanupExpiredData();
-        
-        const securityCheck = await performAdvancedSecurityChecks(request);
-        if (securityCheck.blocked) {
-            stats.blocked++;
-            return createErrorResponse(securityCheck.reason, securityCheck.status);
-        }
-
-        const requestInfo = await parseRequest(request);
-        if (!requestInfo.valid) {
-            stats.blocked++;
-            return createErrorResponse('Invalid request format', 400);
-        }
-
-        const circuitState = checkCircuitBreaker(requestInfo.clientIP);
-        if (circuitState === 'OPEN') {
-            return createErrorResponse('Service temporarily unavailable', 503);
-        }
-
-        const rateLimitResult = await checkAdvancedRateLimit(requestInfo.clientIP, requestInfo.botToken);
-        if (rateLimitResult.limited) {
-            stats.rateLimited++;
-            return createRateLimitResponse(rateLimitResult.retryAfter);
-        }
-
-        const tokenValid = await validateBotTokenAdvanced(requestInfo.botToken);
-        if (!tokenValid) {
-            await recordSuspiciousActivity(requestInfo.clientIP, 'invalid_token');
-            stats.blocked++;
-            return createErrorResponse('Invalid bot token', 401);
-        }
-
-        const response = await proxyToTelegramWithRetry(request, requestInfo);
-        
-        updateCircuitBreaker(requestInfo.clientIP, response.ok);
-        updateStats(startTime, response.ok);
-
-        return response;
-
-    } catch (error) {
-        console.error('Proxy error:', error);
-        stats.failedRequests++;
-        updateCircuitBreaker(getClientIP(request), false);
-        return handleProxyError(error);
+    if (pathname === '/stats') {
+        return handleStatsRequest();
     }
-  }
-  
-  return handle404Request();
+
+    if (pathname === '/') {
+        return handleRootRequest(request);
+    }
+
+    if (request.method === 'OPTIONS') {
+        return handleCorsPreflightRequest();
+    }
+
+    if (URL_PATH_REGEX.test(pathname)) {
+        const startTime = Date.now();
+        try {
+            await cleanupExpiredData();
+
+            const securityCheck = await performAdvancedSecurityChecks(request);
+            if (securityCheck.blocked) {
+                stats.blocked++;
+                return createErrorResponse(securityCheck.reason, securityCheck.status);
+            }
+
+            const requestInfo = await parseRequest(request);
+            if (!requestInfo.valid) {
+                stats.blocked++;
+                return createErrorResponse('Invalid request format', 400);
+            }
+
+            const circuitState = checkCircuitBreaker(requestInfo.clientIP);
+            if (circuitState === 'OPEN') {
+                return createErrorResponse('Service temporarily unavailable', 503);
+            }
+
+            const rateLimitResult = await checkAdvancedRateLimit(requestInfo.clientIP, requestInfo.botToken);
+            if (rateLimitResult.limited) {
+                stats.rateLimited++;
+                return createRateLimitResponse(rateLimitResult.retryAfter);
+            }
+
+            const tokenValid = await validateBotTokenAdvanced(requestInfo.botToken);
+            if (!tokenValid) {
+                await recordSuspiciousActivity(requestInfo.clientIP, 'invalid_token');
+                stats.blocked++;
+                return createErrorResponse('Invalid bot token', 401);
+            }
+
+            const response = await proxyToTelegramWithRetry(request, requestInfo);
+
+            updateCircuitBreaker(requestInfo.clientIP, response.ok);
+            updateStats(startTime, response.ok);
+
+            return response;
+
+        } catch (error) {
+            console.error('Proxy error:', error);
+            stats.failedRequests++;
+            updateCircuitBreaker(getClientIP(request), false);
+            return handleProxyError(error);
+        }
+    }
+
+    return handle404Request();
 }
 
 async function cleanupExpiredData() {
     const now = Date.now();
-    
+
     for (const [token, data] of tokenValidationCache.entries()) {
         if (now >= data.expires) {
             tokenValidationCache.delete(token);
         }
     }
-    
+
     for (const [ip, data] of suspiciousIPs.entries()) {
         if (now >= data.expires) {
             suspiciousIPs.delete(ip);
         }
     }
-    
+
     for (const [key, breaker] of circuitBreakers.entries()) {
         if (now - breaker.lastFailureTime > CIRCUIT_BREAKER.TIMEOUT) {
             breaker.state = 'CLOSED';
             breaker.failureCount = 0;
         }
     }
-    
+
     if (now - stats.lastReset > 3600000) {
         stats.totalRequests = 0;
         stats.failedRequests = 0;
@@ -618,7 +618,7 @@ async function performAdvancedSecurityChecks(request) {
 
     const url = new URL(request.url);
     const fullPath = url.pathname + url.search;
-    
+
     for (const pattern of MALICIOUS_PATTERNS) {
         if (pattern.test(fullPath) || pattern.test(referer)) {
             await recordSuspiciousActivity(clientIP, 'malicious_pattern');
@@ -645,11 +645,11 @@ async function performAdvancedSecurityChecks(request) {
 async function recordSuspiciousActivity(ip, type) {
     const now = Date.now();
     const existing = suspiciousIPs.get(ip) || { count: 0, types: new Set(), expires: now + 3600000 };
-    
+
     existing.count++;
     existing.types.add(type);
     existing.lastActivity = now;
-    
+
     suspiciousIPs.set(ip, existing);
 }
 
@@ -657,19 +657,19 @@ async function parseRequest(request) {
     const url = new URL(request.url);
     const path = url.pathname;
     const clientIP = getClientIP(request);
-    
+
     if (!URL_PATH_REGEX.test(path)) {
         return { valid: false };
     }
-    
+
     const match = path.match(URL_PATH_REGEX);
     const botToken = match?.groups?.bot_token || '';
     const apiMethod = match?.groups?.api_method || '';
-    
+
     if (botToken.length > 200 || apiMethod.length > 50) {
         return { valid: false };
     }
-    
+
     return {
         valid: true,
         clientIP,
@@ -683,7 +683,7 @@ async function parseRequest(request) {
 function getClientIP(request) {
     const cfIP = request.headers.get('cf-connecting-ip');
     if (cfIP) return cfIP;
-    
+
     const xForwardedFor = request.headers.get('x-forwarded-for');
     if (xForwardedFor) {
         const firstIP = xForwardedFor.split(',')[0]?.trim();
@@ -691,43 +691,43 @@ function getClientIP(request) {
             return firstIP;
         }
     }
-    
+
     return request.headers.get('x-real-ip') || 'unknown';
 }
 
 async function checkAdvancedRateLimit(clientIP, botToken) {
     const now = Date.now();
-    
+
     cleanupCounters(now);
-    
+
     if (requestCounters.global.count >= RATE_LIMITS.GLOBAL.max) {
         const retryAfter = Math.ceil((requestCounters.global.resetTime - now) / 1000);
         return { limited: true, retryAfter };
     }
-    
+
     const burstKey = `burst_${clientIP}`;
     const burstCount = getCounterValue(requestCounters.burst, burstKey, now, RATE_LIMITS.BURST.window);
     if (burstCount >= RATE_LIMITS.BURST.max) {
         return { limited: true, retryAfter: 1 };
     }
-    
+
     const ipKey = `ip_${clientIP}`;
     const ipCount = getCounterValue(requestCounters.ip, ipKey, now, RATE_LIMITS.IP.window);
     if (ipCount >= RATE_LIMITS.IP.max) {
         return { limited: true, retryAfter: 60 };
     }
-    
+
     const tokenKey = `token_${botToken}`;
     const tokenCount = getCounterValue(requestCounters.token, tokenKey, now, RATE_LIMITS.TOKEN.window);
     if (tokenCount >= RATE_LIMITS.TOKEN.max) {
         return { limited: true, retryAfter: 60 };
     }
-    
+
     incrementCounter(requestCounters.burst, burstKey, now, RATE_LIMITS.BURST.window);
     incrementCounter(requestCounters.ip, ipKey, now, RATE_LIMITS.IP.window);
     incrementCounter(requestCounters.token, tokenKey, now, RATE_LIMITS.TOKEN.window);
     requestCounters.global.count++;
-    
+
     return { limited: false };
 }
 
@@ -736,9 +736,9 @@ function cleanupCounters(now) {
         requestCounters.global.count = 0;
         requestCounters.global.resetTime = now + RATE_LIMITS.GLOBAL.window;
     }
-    
+
     const counterMaps = [requestCounters.ip, requestCounters.token, requestCounters.burst];
-    
+
     for (const counterMap of counterMaps) {
         for (const [key, data] of counterMap.entries()) {
             if (now >= data.resetTime) {
@@ -771,9 +771,9 @@ function incrementCounter(counterMap, key, now, window = RATE_LIMITS.IP.window) 
 function checkCircuitBreaker(clientIP) {
     const breaker = circuitBreakers.get(clientIP);
     if (!breaker) return 'CLOSED';
-    
+
     const now = Date.now();
-    
+
     if (breaker.state === 'OPEN') {
         if (now - breaker.lastFailureTime >= CIRCUIT_BREAKER.TIMEOUT) {
             breaker.state = 'HALF_OPEN';
@@ -782,14 +782,14 @@ function checkCircuitBreaker(clientIP) {
         }
         return 'OPEN';
     }
-    
+
     if (breaker.state === 'HALF_OPEN') {
         if (breaker.halfOpenAttempts >= CIRCUIT_BREAKER.HALF_OPEN_MAX_CALLS) {
             return 'OPEN';
         }
         breaker.halfOpenAttempts++;
     }
-    
+
     return breaker.state;
 }
 
@@ -804,7 +804,7 @@ function updateCircuitBreaker(clientIP, success) {
         };
         circuitBreakers.set(clientIP, breaker);
     }
-    
+
     if (success) {
         if (breaker.state === 'HALF_OPEN') {
             breaker.state = 'CLOSED';
@@ -815,7 +815,7 @@ function updateCircuitBreaker(clientIP, success) {
     } else {
         breaker.failureCount++;
         breaker.lastFailureTime = Date.now();
-        
+
         if (breaker.failureCount >= CIRCUIT_BREAKER.FAILURE_THRESHOLD) {
             breaker.state = 'OPEN';
         }
@@ -823,45 +823,66 @@ function updateCircuitBreaker(clientIP, success) {
 }
 
 async function validateBotTokenAdvanced(token) {
+    // === Bot Token 白名单校验 ===
+    // Cloudflare Workers 中，环境变量作为全局常量注入
+    // 在 Cloudflare 控制台配置：ALLOWED_BOT_TOKENS=token1,token2
+    const allowedTokensEnv = (typeof ALLOWED_BOT_TOKENS !== 'undefined') ? ALLOWED_BOT_TOKENS : null;
+    if (allowedTokensEnv) {
+        const allowedTokens = allowedTokensEnv
+            .split(',')
+            .map(t => t.trim())
+            .filter(t => t.length > 0);
+        if (!allowedTokens.includes(token)) {
+            // Token 不在白名单中，直接拒绝
+            console.warn(`[白名单] 拒绝未授权的 Bot Token（前缀）: ${token.substring(0, 10)}...`);
+            return false;
+        }
+    } else {
+        // 未配置白名单时，拒绝所有请求（保证安全）
+        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，拒绝请求');
+        return false;
+    }
+    // === 白名单校验通过，进行 Token 格式验证 ===
+
     const cached = tokenValidationCache.get(token);
     if (cached && Date.now() < cached.expires) {
         return cached.valid;
     }
-    
+
     try {
         if (!token || token.length < 40 || token.length > 200 || !token.includes(':')) {
             tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
             return false;
         }
-        
+
         const [botId, botHash] = token.split(':');
         if (!botId || !botHash || botId.length < 8 || botHash.length < 30) {
             tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
             return false;
         }
-        
+
         if (!/^\d+$/.test(botId)) {
             tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
             return false;
         }
-        
+
         if (!/^[A-Za-z0-9_-]+$/.test(botHash)) {
             tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
             return false;
         }
-        
+
         tokenValidationCache.set(token, { valid: true, expires: Date.now() + CACHE_TTL });
         return true;
-        
+
     } catch (error) {
-        console.error('Token validation error:', error);
+        console.error('Token 验证失败:', error);
         return false;
     }
 }
 
 async function proxyToTelegramWithRetry(request, requestInfo) {
     let lastError;
-    
+
     for (let attempt = 0; attempt <= RETRY_CONFIG.MAX_RETRIES; attempt++) {
         try {
             if (attempt > 0) {
@@ -872,53 +893,53 @@ async function proxyToTelegramWithRetry(request, requestInfo) {
                 );
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
-            
+
             const response = await proxyToTelegram(request, requestInfo, attempt);
-            
+
             if (response.ok || response.status < 500) {
                 return response;
             }
-            
+
             lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
-            
+
         } catch (error) {
             lastError = error;
-            
+
             if (error.name === 'AbortError' || error.message.includes('timeout')) {
                 continue;
             }
-            
+
             if (attempt === RETRY_CONFIG.MAX_RETRIES) {
                 throw error;
             }
         }
     }
-    
+
     throw lastError || new Error('Max retries exceeded');
 }
 
 async function proxyToTelegram(request, requestInfo, attempt = 0) {
     const { apiMethod, path } = requestInfo;
-    
+
     const endpointIndex = attempt % TELEGRAM_ENDPOINTS.length;
     const endpoint = TELEGRAM_ENDPOINTS[endpointIndex];
-    
+
     const newUrl = new URL(request.url);
     newUrl.hostname = endpoint.split(':')[0];
     newUrl.port = endpoint.includes(':') ? endpoint.split(':')[1] : '';
     newUrl.pathname = path;
-    
+
     const requestHeaders = new Headers(request.headers);
     sanitizeHeaders(requestHeaders);
-    
+
     requestHeaders.set('Connection', 'keep-alive');
     requestHeaders.set('User-Agent', 'Cloudflare-Worker-Proxy/1.1');
     requestHeaders.set('Cache-Control', 'no-cache');
     requestHeaders.set('X-Forwarded-Proto', 'https');
-    
+
     let requestBody;
     let contentType = request.headers.get('content-type') || '';
-    
+
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         try {
             if (contentType.includes('multipart/form-data') || FILE_UPLOAD_METHODS.has(apiMethod)) {
@@ -937,11 +958,11 @@ async function proxyToTelegram(request, requestInfo, attempt = 0) {
             throw new Error('Failed to read request body');
         }
     }
-    
+
     const controller = new AbortController();
     const timeoutDuration = FILE_UPLOAD_METHODS.has(apiMethod) ? 120000 : 30000;
     const timeout = setTimeout(() => controller.abort(), timeoutDuration);
-    
+
     try {
         const newRequest = new Request(newUrl.toString(), {
             method: request.method,
@@ -950,11 +971,11 @@ async function proxyToTelegram(request, requestInfo, attempt = 0) {
             redirect: 'follow',
             signal: controller.signal
         });
-        
+
         const cacheConfig = CACHE_CONFIGS[apiMethod] || { ttl: 0, edge: false };
-        
+
         const fetchTimeout = FILE_UPLOAD_METHODS.has(apiMethod) ? 100000 : 25000;
-        
+
         const response = await fetch(newRequest, {
             cf: {
                 cacheTtl: cacheConfig.ttl,
@@ -968,22 +989,22 @@ async function proxyToTelegram(request, requestInfo, attempt = 0) {
                 timeout: fetchTimeout
             }
         });
-        
+
         if (!response.ok && response.status >= 500) {
             throw new Error(`Server error: ${response.status}`);
         }
-        
+
         const responseHeaders = new Headers(response.headers);
         addAdvancedSecurityHeaders(responseHeaders);
-        
+
         const responseBody = await response.arrayBuffer();
-        
+
         return new Response(responseBody, {
             status: response.status,
             statusText: response.statusText,
             headers: getCorsHeaders(responseHeaders)
         });
-        
+
     } finally {
         clearTimeout(timeout);
     }
@@ -995,19 +1016,19 @@ function sanitizeHeaders(headers) {
         'x-forwarded-for', 'x-real-ip', 'x-forwarded-proto',
         'host', 'origin', 'referer', 'cookie', 'authorization'
     ];
-    
+
     forbiddenHeaders.forEach(header => headers.delete(header));
-    
+
     for (const [key] of headers) {
         const lowerKey = key.toLowerCase();
-        if (lowerKey.startsWith('cf-') || 
-            lowerKey.startsWith('x-') || 
+        if (lowerKey.startsWith('cf-') ||
+            lowerKey.startsWith('x-') ||
             lowerKey.startsWith('sec-') ||
             lowerKey.includes('proxy')) {
             headers.delete(key);
         }
     }
-    
+
     return headers;
 }
 
@@ -1032,7 +1053,7 @@ function getCorsHeaders(headers = new Headers()) {
     corsHeaders.set('Access-Control-Expose-Headers', 'X-RateLimit-Remaining, X-RateLimit-Reset, X-Response-Time');
     corsHeaders.set('Access-Control-Max-Age', '86400');
     corsHeaders.set('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
-    
+
     return corsHeaders;
 }
 
@@ -1047,9 +1068,9 @@ function createErrorResponse(message, status = 400) {
     const headers = getCorsHeaders();
     headers.set('Content-Type', 'application/json');
     headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    
-    return new Response(JSON.stringify({ 
-        ok: false, 
+
+    return new Response(JSON.stringify({
+        ok: false,
         error: message,
         error_code: status,
         timestamp: new Date().toISOString(),
@@ -1067,9 +1088,9 @@ function createRateLimitResponse(retryAfter) {
     headers.set('X-RateLimit-Remaining', '0');
     headers.set('X-RateLimit-Reset', (Date.now() + (retryAfter * 1000)).toString());
     headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    
-    return new Response(JSON.stringify({ 
-        ok: false, 
+
+    return new Response(JSON.stringify({
+        ok: false,
         error: 'Rate limit exceeded. Please try again later.',
         retry_after: retryAfter,
         timestamp: new Date().toISOString(),
@@ -1084,12 +1105,12 @@ function handleProxyError(error) {
     const errorMessage = error.message || 'Unknown error occurred';
     const isTimeout = error.name === 'AbortError' || errorMessage.includes('timeout');
     const status = isTimeout ? 504 : 500;
-    
+
     const headers = getCorsHeaders();
     headers.set('Content-Type', 'application/json');
-    
-    return new Response(JSON.stringify({ 
-        ok: false, 
+
+    return new Response(JSON.stringify({
+        ok: false,
         error: isTimeout ? 'Gateway timeout' : 'Proxy service temporarily unavailable',
         details: errorMessage.substring(0, 200),
         timestamp: new Date().toISOString(),
@@ -1103,11 +1124,11 @@ function handleProxyError(error) {
 function updateStats(startTime, success) {
     const responseTime = Date.now() - startTime;
     stats.totalRequests++;
-    
+
     if (!success) {
         stats.failedRequests++;
     }
-    
+
     stats.avgResponseTime = ((stats.avgResponseTime * (stats.totalRequests - 1)) + responseTime) / stats.totalRequests;
 }
 
