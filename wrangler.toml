@@ -3,4 +3,8 @@ main = "manual-worker/worker.js"
 compatibility_date = "2023-12-01"
 
 # 环境变量请直接在 Cloudflare 控制台的 Settings -> Variables 中配置，
-# 不要写在 wrangler.toml 中，否则 GitHub 自动构建时会覆盖掉网页端的配置。
+
+[observability.logs]
+enabled = false
+invocation_logs = true
+
