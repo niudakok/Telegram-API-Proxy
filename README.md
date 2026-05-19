@@ -57,7 +57,7 @@
 ### Python 示例
 ```python
 import requests
-API_BASE = "https://tap.niuda123.workers.dev/bot12345:TOKEN"
+API_BASE = "https://tap.test.workers.dev/bot12345:TOKEN"
 resp = requests.get(f"{API_BASE}/getMe")
 print(resp.json())
 ```
@@ -65,7 +65,7 @@ print(resp.json())
 ### Webhook 使用示例
 ```python
 import requests
-API_BASE = "https://tap.niuda123.workers.dev/bot12345:TOKEN"
+API_BASE = "https://tap.test.workers.dev/bot12345:TOKEN"
 
 # 设置 Webhook
 webhook_url = "https://your-domain.com/webhook"
