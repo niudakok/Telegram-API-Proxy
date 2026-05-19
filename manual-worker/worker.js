@@ -490,9 +490,14 @@ const ADMIN_HTML = `
                 <textarea id="tk" placeholder="123456:ABC...,789012:DEF..."></textarea>
                 <div class="help-text">支持逐条添加、删除和去重；保存时会自动转换成环境变量格式。</div>
             </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="stripProxyUrl" checked style="width:auto; margin-right:8px;">setWebhook 时移除 proxy_url（推荐）</label>
+                <div class="help-text">关闭后将启用严格透传模式（不改写 setWebhook 请求体）。</div>
+            </div>
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">60267b7</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
@@ -506,6 +511,26 @@ const ADMIN_HTML = `
             msg.style.background = err ? '#fee2e2' : '#d1fae5';
             msg.style.color = err ? '#991b1b' : '#065f46';
             if (!err) setTimeout(() => msg.style.display = 'none', 5000);
+        }
+
+        const apiPath = '/api/admin/tokens';
+        const settingsPath = '/api/admin/settings';
+
+        function normalizeToken(token) { return token.trim(); }
+        function isValidToken(token) { return /^\\d{5,}:[\\w-]{10,}$/.test(token); }
+        function maskToken(token) {
+            const i = token.indexOf(':');
+            if (i < 0) return token;
+            const prefix = token.slice(0, i + 1);
+            const secret = token.slice(i + 1);
+            if (secret.length <= 8) return prefix + '********';
+            return prefix + secret.slice(0, 4) + '...' + secret.slice(-4);
+        }
+
+        function parseTokens(raw) {
+            return [...new Set(raw.split(',').map(normalizeToken).filter(Boolean))];
+        }
+
         }
 
         const apiPath = '/api/admin/tokens';
@@ -585,6 +610,11 @@ const ADMIN_HTML = `
                     tokenList = parseTokens(d.tokens || '');
                     document.getElementById('editor').style.display = 'block';
                     renderTokens();
+                    const conf = await fetch(settingsPath, { headers: { 'Authorization': 'Bearer ' + p } });
+                    if (conf.ok) {
+                        const sd = await conf.json();
+                        document.getElementById('stripProxyUrl').checked = sd.stripProxyUrl !== false;
+                    }
                     show(\`连接成功，已加载 \${tokenList.length} 个 Token\`, false);
                 } else {
                     const d = await res.json().catch(() => ({}));
@@ -606,6 +636,16 @@ const ADMIN_HTML = `
                     body: JSON.stringify({ tokens: t })
                 });
                 if (res.ok) {
+                    const stripProxyUrl = document.getElementById('stripProxyUrl').checked;
+                    const sres = await fetch(settingsPath, {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + p, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stripProxyUrl })
+                    });
+                    if (!sres.ok) {
+                        const se = await sres.json().catch(() => ({}));
+                        return show(se.error || 'Token 已保存，但 setWebhook 设置保存失败', true);
+                    }
                     show(\`保存成功！已提交 \${tokenList.length} 个 Token，约几秒后生效。\`, false);
                 } else {
                     const d = await res.json().catch(() => ({}));
