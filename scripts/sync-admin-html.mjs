@@ -21,7 +21,9 @@ if (end === -1) {
   throw new Error('Cannot find end of ADMIN_HTML template (`;) in manual-worker/worker.js');
 }
 
-const next = `${worker.slice(0, start)}const ADMIN_HTML = \`\n${escaped}\n\`;${worker.slice(end + 2)}`;
+// ADMIN_HTML 应为文件最后一个大块常量；这里强制覆盖到文件尾，
+// 避免历史脏尾巴（重复片段）残留导致构建失败。
+const next = `${worker.slice(0, start)}const ADMIN_HTML = \`\n${escaped}\n\`;\n`;
 
 if (next !== worker) {
   writeFileSync(WORKER_PATH, next, 'utf8');
