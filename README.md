@@ -87,6 +87,17 @@ print("Delete Webhook:", resp.json())
 - 无需配置数据库，通过 Cloudflare API 直接同步设置。
 - 界面简洁，支持实时更新 Token 白名单。
 
+## 🔄 管理后台页面单一来源
+
+`/admin` 在线页面由 `manual-worker/worker.js` 中的 `ADMIN_HTML` 提供。为避免“只改了 `admin.html` 但线上不生效”，本仓库提供同步脚本：
+
+```bash
+node scripts/sync-admin-html.mjs
+```
+
+每次修改 `admin.html` 后，请先运行该脚本，再提交变更。
+
+
 ---
 
 ## 📄 项目许可证
