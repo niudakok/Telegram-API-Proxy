@@ -6,6 +6,7 @@ const WORKER_PATH = 'manual-worker/worker.js';
 
 const commitHash = execSync('git rev-parse --short HEAD').toString().trim();
 const html = readFileSync(ADMIN_HTML_PATH, 'utf8').replaceAll('__COMMIT_HASH__', commitHash).trimEnd();
+const html = readFileSync(ADMIN_HTML_PATH, 'utf8').trimEnd();
 const worker = readFileSync(WORKER_PATH, 'utf8');
 
 const escaped = html
@@ -26,6 +27,7 @@ if (end === -1) {
 // ADMIN_HTML 应为文件最后一个大块常量；这里强制覆盖到文件尾，
 // 避免历史脏尾巴（重复片段）残留导致构建失败。
 const next = `${worker.slice(0, start)}const ADMIN_HTML = \`\n${escaped}\n\`;\n`;
+const next = `${worker.slice(0, start)}const ADMIN_HTML = \`\n${escaped}\n\`;${worker.slice(end + 2)}`;
 
 if (next !== worker) {
   writeFileSync(WORKER_PATH, next, 'utf8');

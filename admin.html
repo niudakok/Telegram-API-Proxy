@@ -149,6 +149,71 @@
             renderTokens();
         }
 
+        function normalizeToken(token) { return token.trim(); }
+        function isValidToken(token) { return /^\d{5,}:[\w-]{10,}$/.test(token); }
+        function maskToken(token) {
+            const i = token.indexOf(':');
+            if (i < 0) return token;
+            const prefix = token.slice(0, i + 1);
+            const secret = token.slice(i + 1);
+            if (secret.length <= 8) return prefix + '********';
+            return prefix + secret.slice(0, 4) + '...' + secret.slice(-4);
+        }
+
+        function parseTokens(raw) {
+            return [...new Set(raw.split(',').map(normalizeToken).filter(Boolean))];
+        }
+
+        function syncTextarea() {
+            document.getElementById('tk').value = tokenList.join(',');
+        }
+
+        function renderTokens() {
+            tokenListEl.innerHTML = '';
+            if (!tokenList.length) {
+                tokenListEl.innerHTML = '<div class="empty">暂无 Token，请添加至少一个。</div>';
+                syncTextarea();
+                return;
+            }
+            tokenList.forEach((token, idx) => {
+                const item = document.createElement('div');
+                item.className = 'token-item';
+                item.innerHTML = `<div><div class="token-text">${maskToken(token)}</div><div class="token-meta">#${idx + 1} · ${isValidToken(token) ? '格式正常' : '格式可能有误'}</div></div><button class="remove-btn" onclick="removeToken(${idx})">删除</button>`;
+                tokenListEl.appendChild(item);
+            });
+            syncTextarea();
+        }
+
+        function addToken() {
+            const input = document.getElementById('newToken');
+            const token = normalizeToken(input.value);
+            if (!token) return;
+            if (tokenList.includes(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = '该 Token 已存在，已自动忽略重复项。';
+                return;
+            }
+            if (!isValidToken(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = 'Token 格式看起来不正确（应类似 123456:ABC...），请确认后再添加。';
+                return;
+            }
+            badTokenMsg.style.display = 'none';
+            tokenList.push(token);
+            input.value = '';
+            renderTokens();
+        }
+
+        function removeToken(idx) {
+            tokenList.splice(idx, 1);
+            renderTokens();
+        }
+
+        function clearTokens() {
+            tokenList = [];
+            renderTokens();
+        }
+
         async function load() {
             const p = document.getElementById('pw').value;
             if (!p) return show('请输入密码', true);
