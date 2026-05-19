@@ -134,7 +134,7 @@ async function handleRequest(request, env) {
                 return createErrorResponse('Invalid or unauthorized bot token', 401);
             }
 
-            const response = await proxyToTelegram(request, requestInfo);
+            const response = await proxyToTelegram(request, requestInfo, env);
             updateStats(startTime, response.ok);
             return response;
 
@@ -232,7 +232,12 @@ function parseRequest(request) {
     };
 }
 
-async function proxyToTelegram(request, info) {
+
+function shouldNormalizeSetWebhookProxyUrl(env) {
+    return String(env.SETWEBHOOK_STRIP_PROXY_URL || 'true').toLowerCase() === 'true';
+}
+
+async function proxyToTelegram(request, info, env) {
     const newUrl = "https://api.telegram.org" + info.path;
     const headers = new Headers(request.headers);
     headers.delete('host');
@@ -242,28 +247,24 @@ async function proxyToTelegram(request, info) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         const contentType = request.headers.get('content-type') || '';
         if (info.apiMethod === 'setWebhook') {
+            const stripProxyUrl = shouldNormalizeSetWebhookProxyUrl(env);
             if (contentType.includes('multipart/form-data')) {
                 const formData = await request.formData();
-                // 处理 setWebhook 方法，确保 proxy_url 正确设置
-                if (formData.has('proxy_url')) {
-                    // 移除 proxy_url 参数，让 Telegram 直接使用我们的代理地址
+                if (stripProxyUrl && formData.has('proxy_url')) {
                     formData.delete('proxy_url');
                 }
                 body = formData;
                 headers.delete('content-type');
             } else {
-                // 处理 JSON 格式的 setWebhook 请求
                 const bodyText = await request.text();
                 try {
                     const bodyJson = JSON.parse(bodyText);
-                    // 移除 proxy_url 参数
-                    if (bodyJson.proxy_url) {
+                    if (stripProxyUrl && bodyJson.proxy_url) {
                         delete bodyJson.proxy_url;
                     }
                     body = JSON.stringify(bodyJson);
                     headers.set('Content-Type', 'application/json');
                 } catch {
-                    // 如果不是有效的 JSON，直接使用原始请求体
                     body = bodyText;
                 }
             }
@@ -308,6 +309,25 @@ async function handleAdminApiRequest(request, pathname, env) {
         try {
             const { tokens } = await request.json();
             const result = await updateCloudflareEnv('ALLOWED_BOT_TOKENS', tokens, env);
+            return new Response(JSON.stringify(result), {
+                status: result.success ? 200 : 400,
+                headers: { 'content-type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
+        }
+    }
+
+    if (request.method === 'GET' && pathname === '/api/admin/settings') {
+        const strip = String(env.SETWEBHOOK_STRIP_PROXY_URL || 'true').toLowerCase() === 'true';
+        return new Response(JSON.stringify({ stripProxyUrl: strip }), { headers: { 'content-type': 'application/json' } });
+    }
+
+    if (request.method === 'POST' && pathname === '/api/admin/settings') {
+        try {
+            const { stripProxyUrl } = await request.json();
+            const v = stripProxyUrl === false ? 'false' : 'true';
+            const result = await updateCloudflareEnv('SETWEBHOOK_STRIP_PROXY_URL', v, env);
             return new Response(JSON.stringify(result), {
                 status: result.success ? 200 : 400,
                 headers: { 'content-type': 'application/json' }
@@ -392,7 +412,8 @@ function checkGlobalRateLimit() {
 async function cleanupExpiredData() { }
 function updateStats(startTime, ok) {
     stats.totalRequests++;
-    if (!ok) stats.failedRequests++;
+    if (ok) stats.successfulRequests++;
+    else stats.failedRequests++;
     stats.avgResponseTime = (stats.avgResponseTime + (Date.now() - startTime)) / 2;
 }
 

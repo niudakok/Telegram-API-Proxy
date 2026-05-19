@@ -47,6 +47,7 @@
 | `CF_ACCOUNT_ID` | 可选 | 用于后台动态修改配置 (CF 账户 ID) |
 | `CF_SCRIPT_NAME` | 可选 | 当前 Worker 的名称 (如 `tap`) |
 | `CF_API_TOKEN` | 可选 | 具有 Edit Worker 权限的 API 令牌 |
+| `SETWEBHOOK_STRIP_PROXY_URL` | 可选 | `true`(默认) 时会移除 `setWebhook` 请求中的 `proxy_url`；设为 `false` 可启用严格透传模式 |
 
 ## 📖 使用示例
 
@@ -112,3 +113,18 @@ node scripts/sync-admin-html.mjs
 ### 📜 Source
 This project is modified based on:
 [4n0nymou3/Telegram-API-Proxy](https://github.com/4n0nymou3/Telegram-API-Proxy)
+
+
+## 🧪 一致性检查
+
+建议在提交前运行：
+
+```bash
+node scripts/sync-admin-html.mjs
+node scripts/check-proxy-consistency.mjs
+```
+
+这会校验：
+- `admin.html` 与 Worker 内嵌 `ADMIN_HTML` 完全一致；
+- 仅存在一个 `ADMIN_HTML` 块；
+- `setWebhook` 透传开关和统计字段更新逻辑存在。
