@@ -93,9 +93,11 @@ print("Delete Webhook:", resp.json())
 
 本项目采用 [GPL-3.0](LICENSE) 许可证。
 
-## 👤 作者
+---
 
-**Anonymous** (Modded by Antigravity)
+### 👤 Author
+**niudakok**
 
-* Telegram: [@BXAMbot](https://t.me/BXAMbot)
-* GitHub: [niudakok/Telegram-API-Proxy](https://github.com/niudakok/Telegram-API-Proxy)
+### 📜 Source
+This project is modified based on:
+[4n0nymou3/Telegram-API-Proxy](https://github.com/4n0nymou3/Telegram-API-Proxy)
