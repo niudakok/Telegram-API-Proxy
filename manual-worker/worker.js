@@ -531,25 +531,6 @@ const ADMIN_HTML = `
             return [...new Set(raw.split(',').map(normalizeToken).filter(Boolean))];
         }
 
-        }
-
-        const apiPath = '/api/admin/tokens';
-
-        function normalizeToken(token) { return token.trim(); }
-        function isValidToken(token) { return /^\\d{5,}:[\\w-]{10,}$/.test(token); }
-        function maskToken(token) {
-            const i = token.indexOf(':');
-            if (i < 0) return token;
-            const prefix = token.slice(0, i + 1);
-            const secret = token.slice(i + 1);
-            if (secret.length <= 8) return prefix + '********';
-            return prefix + secret.slice(0, 4) + '...' + secret.slice(-4);
-        }
-
-        function parseTokens(raw) {
-            return [...new Set(raw.split(',').map(normalizeToken).filter(Boolean))];
-        }
-
         function syncTextarea() {
             document.getElementById('tk').value = tokenList.join(',');
         }
