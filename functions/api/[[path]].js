@@ -517,10 +517,9 @@ async function proxyToTelegramWithRetry(request, requestInfo, env) {
         } catch (error) {
             lastError = error;
             
-            // 连接池满（EXCEEDED_CONCURRENT_CONNECTIONS）或超时：必须重试
-            if (error.name === 'AbortError' 
-                || error.message.includes('timeout')
-                || error.message.includes('EXCEEDED_CONCURRENT')
+            // 仅 Cloudflare 连接池满（EXCEEDED_CONCURRENT）时重试
+            // 超时和其他错误直接返回，让客户端自己做重试
+            if (error.message.includes('EXCEEDED_CONCURRENT')
                 || error.message.includes('Connection') && error.message.includes('limit')) {
                 continue;
             }

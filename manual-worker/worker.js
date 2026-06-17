@@ -150,9 +150,8 @@ async function handleRequest(request, env) {
                 } catch (error) {
                     lastProxyError = error;
                     const msg = error.message || '';
-                    const isRetryable = error.name === 'AbortError'
-                        || msg.includes('timeout')
-                        || msg.includes('EXCEEDED_CONCURRENT')
+                    // 仅 Cloudflare 连接池满时重试，超时直接返回让客户端重试
+                    const isRetryable = msg.includes('EXCEEDED_CONCURRENT')
                         || msg.includes('Connection') && msg.includes('limit');
                     if (!isRetryable) break;
                 }
