@@ -1,0 +1,8 @@
+# 本地开发配置（含 Token，禁止提交）
+.dev.vars
+
+# wrangler 缓存
+.wrangler/
+
+# Node
+node_modules/

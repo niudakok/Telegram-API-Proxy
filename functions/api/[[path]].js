@@ -41,9 +41,7 @@ const ALLOWED_USER_AGENTS = /telegram|bot|curl|postman|httpie|axios|fetch/i;
 const BLOCKED_USER_AGENTS = /scanner|crawler|spider|bot.*attack|sqlmap|nikto|nmap/i;
 
 const TELEGRAM_ENDPOINTS = [
-    'api.telegram.org',
-    'api.telegram.org:443',
-    'api.telegram.org:80'
+    'api.telegram.org'
 ];
 
 const CACHE_CONFIGS = {
@@ -132,7 +130,7 @@ export async function onRequest(context) {
             return createErrorResponse('Invalid bot token', 401);
         }
 
-        const response = await proxyToTelegramWithRetry(request, requestInfo);
+        const response = await proxyToTelegramWithRetry(request, requestInfo, env);
         
         updateCircuitBreaker(requestInfo.clientIP, response.ok);
         updateStats(startTime, response.ok);
@@ -229,8 +227,13 @@ async function performAdvancedSecurityChecks(request, env) {
     const url = new URL(request.url);
     const fullPath = url.pathname + url.search;
     
+    // 路径遍历检测：同时检查规范化前和规范化后的路径
+    // request.url 保留原始路径（含 ../），url.pathname 已被 URL 类规范化
+    const rawPath = decodeURIComponent(request.url.replace(/^https?:\/\/[^/]+/, ''));
+    const hasPathTraversal = /(\.\.\/|\.\.\\|%2e%2e%2f|%252e%252e%252f)/i.test(rawPath);
+    
     for (const pattern of MALICIOUS_PATTERNS) {
-        if (pattern.test(fullPath) || pattern.test(referer)) {
+        if (pattern.test(fullPath) || hasPathTraversal || pattern.test(referer)) {
             await recordSuspiciousActivity(clientIP, 'malicious_pattern');
             return { blocked: true, reason: 'Malicious request detected', status: 400 };
         }
@@ -489,7 +492,7 @@ async function validateBotTokenAdvanced(token, env) {
     }
 }
 
-async function proxyToTelegramWithRetry(request, requestInfo) {
+async function proxyToTelegramWithRetry(request, requestInfo, env) {
     let lastError;
     
     for (let attempt = 0; attempt <= RETRY_CONFIG.MAX_RETRIES; attempt++) {
@@ -503,7 +506,7 @@ async function proxyToTelegramWithRetry(request, requestInfo) {
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
             
-            const response = await proxyToTelegram(request, requestInfo, attempt);
+            const response = await proxyToTelegram(request, requestInfo, attempt, env);
             
             if (response.ok || response.status < 500) {
                 return response;
@@ -514,7 +517,11 @@ async function proxyToTelegramWithRetry(request, requestInfo) {
         } catch (error) {
             lastError = error;
             
-            if (error.name === 'AbortError' || error.message.includes('timeout')) {
+            // 连接池满（EXCEEDED_CONCURRENT_CONNECTIONS）或超时：必须重试
+            if (error.name === 'AbortError' 
+                || error.message.includes('timeout')
+                || error.message.includes('EXCEEDED_CONCURRENT')
+                || error.message.includes('Connection') && error.message.includes('limit')) {
                 continue;
             }
             
@@ -527,16 +534,15 @@ async function proxyToTelegramWithRetry(request, requestInfo) {
     throw lastError || new Error('Max retries exceeded');
 }
 
-async function proxyToTelegram(request, requestInfo, attempt = 0) {
+async function proxyToTelegram(request, requestInfo, attempt = 0, env = {}) {
     const { botToken, apiMethod, path } = requestInfo;
     
     const endpointIndex = attempt % TELEGRAM_ENDPOINTS.length;
     const endpoint = TELEGRAM_ENDPOINTS[endpointIndex];
     
-    const newUrl = new URL(request.url);
-    newUrl.hostname = endpoint.split(':')[0];
-    newUrl.port = endpoint.includes(':') ? endpoint.split(':')[1] : '';
-    newUrl.pathname = path;
+    // 支持 TELEGRAM_API_BASE 环境变量覆盖（用于本地开发测试）
+    const telegramBase = env.TELEGRAM_API_BASE || `https://${endpoint}`;
+    const newUrl = new URL(path, telegramBase.replace(/\/+$/, '') + '/');
     
     const requestHeaders = new Headers(request.headers);
     sanitizeHeaders(requestHeaders);
@@ -594,7 +600,8 @@ async function proxyToTelegram(request, requestInfo, attempt = 0) {
     }
     
     const controller = new AbortController();
-    const timeoutDuration = FILE_UPLOAD_METHODS.has(apiMethod) ? 120000 : 30000;
+    // 缩短超时：普通请求 15s，文件上传 60s — 避免长时间占用连接池
+    const timeoutDuration = FILE_UPLOAD_METHODS.has(apiMethod) ? 60000 : 15000;
     const timeout = setTimeout(() => controller.abort(), timeoutDuration);
     
     try {
@@ -699,6 +706,7 @@ function handleCorsPreflightRequest() {
 }
 
 function createErrorResponse(message, status = 400) {
+    const errorType = errorTypeFromCode(status, message);
     const headers = getCorsHeaders();
     headers.set('Content-Type', 'application/json');
     headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -706,6 +714,7 @@ function createErrorResponse(message, status = 400) {
     return new Response(JSON.stringify({ 
         ok: false, 
         error: message,
+        error_type: errorType,
         error_code: status,
         timestamp: new Date().toISOString(),
         request_id: generateRequestId()
@@ -726,6 +735,7 @@ function createRateLimitResponse(retryAfter) {
     return new Response(JSON.stringify({ 
         ok: false, 
         error: 'Rate limit exceeded. Please try again later.',
+        error_type: 'rate_limited',
         retry_after: retryAfter,
         timestamp: new Date().toISOString(),
         request_id: generateRequestId()
@@ -733,6 +743,20 @@ function createRateLimitResponse(retryAfter) {
         status: 429,
         headers
     });
+}
+
+function errorTypeFromCode(status, message) {
+    if (status === 401) return 'invalid_token';
+    if (status === 404) return 'not_found';
+    if (status === 405) return 'security_violation';
+    if (status === 429) return 'rate_limited';
+    if (status === 503) return 'circuit_breaker';
+    if (status === 504) return 'timeout';
+    const msg = (message || '').toLowerCase();
+    if (msg.includes('timeout') || msg.includes('abort')) return 'timeout';
+    if (msg.includes('exceeded_concurrent') || (msg.includes('connection') && msg.includes('limit'))) return 'connection_pool_full';
+    if (status >= 500) return 'proxy_error';
+    return 'proxy_error';
 }
 
 async function handleErrorResponse(response) {
@@ -758,6 +782,8 @@ async function handleErrorResponse(response) {
         };
     }
     
+    body.error_type = body.error_type || errorTypeFromCode(response.status, body.error);
+    
     const headers = getCorsHeaders();
     headers.set('Content-Type', 'application/json');
     
@@ -770,14 +796,20 @@ async function handleErrorResponse(response) {
 function handleProxyError(error) {
     const errorMessage = error.message || 'Unknown error occurred';
     const isTimeout = error.name === 'AbortError' || errorMessage.includes('timeout');
-    const status = isTimeout ? 504 : 500;
+    const isConnPoolFull = errorMessage.includes('EXCEEDED_CONCURRENT') || (errorMessage.includes('Connection') && errorMessage.includes('limit'));
+    const status = isTimeout ? 504 : isConnPoolFull ? 503 : 500;
+    let errorType;
+    if (isTimeout) errorType = 'timeout';
+    else if (isConnPoolFull) errorType = 'connection_pool_full';
+    else errorType = 'proxy_error';
     
     const headers = getCorsHeaders();
     headers.set('Content-Type', 'application/json');
     
     return new Response(JSON.stringify({ 
         ok: false, 
-        error: isTimeout ? 'Gateway timeout' : 'Proxy service temporarily unavailable',
+        error: isTimeout ? 'Gateway timeout' : isConnPoolFull ? 'Connection pool exhausted' : 'Proxy service temporarily unavailable',
+        error_type: errorType,
         details: errorMessage.substring(0, 200),
         timestamp: new Date().toISOString(),
         request_id: generateRequestId()

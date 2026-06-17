@@ -91,7 +91,7 @@ async function handleRequest(request, env) {
                 return createErrorResponse('Invalid or unauthorized bot token', 401);
             }
 
-            const response = await proxyFileFromTelegram(fileInfo);
+            const response = await proxyFileFromTelegram(fileInfo, env);
             updateStats(startTime, response.ok);
             return response;
 
@@ -134,9 +134,35 @@ async function handleRequest(request, env) {
                 return createErrorResponse('Invalid or unauthorized bot token', 401);
             }
 
-            const response = await proxyToTelegram(request, requestInfo, env);
-            updateStats(startTime, response.ok);
-            return response;
+            // 带重试的代理请求：最多重试 2 次（超时/连接池满时自动重试）
+            let proxyResponse;
+            let lastProxyError;
+            for (let attempt = 0; attempt <= 2; attempt++) {
+                if (attempt > 0) {
+                    const delay = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    stats.retries++;
+                }
+                try {
+                    proxyResponse = await proxyToTelegram(request, requestInfo, env);
+                    lastProxyError = null;
+                    break;
+                } catch (error) {
+                    lastProxyError = error;
+                    const msg = error.message || '';
+                    const isRetryable = error.name === 'AbortError'
+                        || msg.includes('timeout')
+                        || msg.includes('EXCEEDED_CONCURRENT')
+                        || msg.includes('Connection') && msg.includes('limit');
+                    if (!isRetryable) break;
+                }
+            }
+            if (lastProxyError) {
+                throw lastProxyError;
+            }
+
+            updateStats(startTime, proxyResponse.ok);
+            return proxyResponse;
 
         } catch (error) {
             console.error('Proxy error:', error);
@@ -179,8 +205,9 @@ function parseFileRequest(request) {
     };
 }
 
-async function proxyFileFromTelegram(fileInfo) {
-    const fileUrl = `https://api.telegram.org/file/bot${fileInfo.botToken}/${fileInfo.fileId}`;
+async function proxyFileFromTelegram(fileInfo, env) {
+    const baseUrl = getTelegramFileBaseUrl(env);
+    const fileUrl = `${baseUrl}${fileInfo.botToken}/${fileInfo.fileId}`;
     
     const headers = new Headers();
     headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
@@ -211,9 +238,12 @@ function performAdvancedSecurityChecks(request) {
         return { blocked: true, reason: 'Method Forbidden', status: 405 };
     }
     const url = new URL(request.url);
+    // 路径遍历检测：使用原 URL 字符串（url.pathname 已被 URL 类规范化，检测不到 ../）
+    const rawPath = decodeURIComponent(request.url.replace(/^https?:\/\/[^/]+/, ''));
+    const hasPathTraversal = /(\.\.\/|\.\.\\|%2e%2e%2f|%252e%252e%252f)/i.test(rawPath);
     const MALICIOUS_PATTERNS = [/(\.\.|\/\.\/|\\\.\\|%2e%2e|%252e%252e)/i, /<script[^>]*>/i];
     for (const pattern of MALICIOUS_PATTERNS) {
-        if (pattern.test(url.pathname) || pattern.test(url.search)) {
+        if (pattern.test(rawPath) || hasPathTraversal || pattern.test(url.search)) {
             return { blocked: true, reason: 'Security violation', status: 400 };
         }
     }
@@ -237,8 +267,17 @@ function shouldNormalizeSetWebhookProxyUrl(env) {
     return String(env.SETWEBHOOK_STRIP_PROXY_URL || 'true').toLowerCase() === 'true';
 }
 
+function getTelegramBaseUrl(env) {
+    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '');
+}
+
+function getTelegramFileBaseUrl(env) {
+    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '') + '/file/bot';
+}
+
 async function proxyToTelegram(request, info, env) {
-    const newUrl = "https://api.telegram.org" + info.path;
+    const baseUrl = getTelegramBaseUrl(env);
+    const newUrl = baseUrl + info.path;
     const headers = new Headers(request.headers);
     headers.delete('host');
     headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
@@ -273,12 +312,24 @@ async function proxyToTelegram(request, info, env) {
         }
     }
 
-    const response = await fetch(newUrl, {
-        method: request.method,
-        headers: headers,
-        body: body,
-        redirect: 'follow'
-    });
+    // 带超时的请求：普通 15s，避免连接池被慢连接占满
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    let response;
+    try {
+        response = await fetch(newUrl, {
+            method: request.method,
+            headers: headers,
+            body: body,
+            redirect: 'follow',
+            signal: controller.signal
+        });
+    } catch (error) {
+        clearTimeout(timeout);
+        throw error;
+    }
+    clearTimeout(timeout);
 
     const respHeaders = new Headers(response.headers);
     respHeaders.set('Access-Control-Allow-Origin', '*');
@@ -386,7 +437,7 @@ function handleStatsRequest() {
 }
 
 function handle404Request() {
-    return new Response(JSON.stringify({ ok: false, error: 'Endpoint not found' }), { status: 404 });
+    return new Response(JSON.stringify({ ok: false, error: 'Endpoint not found', error_type: 'not_found' }), { status: 404, headers: { 'content-type': 'application/json' } });
 }
 
 function handleRootRequest(request) {
@@ -417,12 +468,27 @@ function updateStats(startTime, ok) {
     stats.avgResponseTime = (stats.avgResponseTime + (Date.now() - startTime)) / 2;
 }
 
+function errorTypeFromStatus(err, status) {
+    if (status === 401) return 'invalid_token';
+    if (status === 404) return 'not_found';
+    if (status === 405) return 'security_violation';
+    if (status === 429) return 'rate_limited';
+    if (status === 503) return 'circuit_breaker';
+    if (status === 504) return 'timeout';
+    const msg = (err && err.message ? err.message : String(err)).toLowerCase();
+    if (msg.includes('timeout') || msg.includes('abort')) return 'timeout';
+    if (msg.includes('exceeded_concurrent') || (msg.includes('connection') && msg.includes('limit'))) return 'connection_pool_full';
+    if (status >= 500) return 'proxy_error';
+    return 'proxy_error';
+}
+
 function createErrorResponse(err, status) {
-    return new Response(JSON.stringify({ ok: false, error: err }), { status, headers: { 'content-type': 'application/json' } });
+    const errorType = errorTypeFromStatus(err, status);
+    return new Response(JSON.stringify({ ok: false, error: typeof err === 'string' ? err : err.message, error_type: errorType }), { status, headers: { 'content-type': 'application/json' } });
 }
 
 function createRateLimitResponse(retry) {
-    return new Response(JSON.stringify({ ok: false, error: 'Rate limit' }), { status: 429, headers: { 'Retry-After': retry, 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: false, error: 'Rate limit exceeded', error_type: 'rate_limited', retry_after: retry }), { status: 429, headers: { 'Retry-After': retry, 'content-type': 'application/json' } });
 }
 
 function handleCorsPreflightRequest() {
