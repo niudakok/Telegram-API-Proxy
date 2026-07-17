@@ -1,33 +1,30 @@
 # Telegram-API-Proxy 开发运维日志
 
 > **创建时间:** 2026-07-17
-> **最后更新:** 2026-07-17 17:35
-> **维护者:** Hermes Agent (xiaobei profile)
+> **最后更新:** 2026-07-17 18:30
+> **维护者:** Hermes Agent (xiaobei profile) → AtomCode
 > **项目地址:** https://github.com/niudakok/Telegram-API-Proxy
 
 ---
 
 ## 📌 当前状态
 
-### ✅ 已修复（本地代码）
-- `functions/api/api.js` — 修复后的完整代理代码，包含：
-  - `/file/bot<token>/<file_path>` 正确路径格式
-  - `authorization` 请求头保留（文件下载需要）
-  - `/stats` 端点返回 `version` 信息
+### ✅ 已修复（dev 分支，已部署）
+- `manual-worker/worker.js` — 修复后的 Worker 版代理代码，包含：
+  - VERSION 常量（`/stats` 返回版本信息）
   - `/ping` 端点测试 Telegram API 连通性
-  - 默认导出 `export { onRequest as default }` (ES Module 兼容)
+  - `/file/bot<token>/<file_path>` 正确路径格式（无重复 `/file/bot`）
+- `AGENTS.md` — 新增项目指令文件
+- 已知问题：`wrangler.toml` `main` 需指向 `manual-worker/worker.js`（Worker 兼容格式），`api.js` 的 Pages Functions 格式不兼容 Worker 运行时
 
-### ❌ 未部署（构建失败）
-- **问题:** `functions/api/[[path]].js` 重命名为 `api.js` 后，GitHub 自动构建仍然失败
-- **报错:** `A request to the Cloudflare API failed` — 版本上传 API 不接受 Service Worker 语法
-- **原因:** 代码使用 `export async function onRequest` (ES Module)，但 Cloudflare 认为这是 Service Worker 格式
-- **解决:** 已添加 `export { onRequest as default }` 但仍需 Cloudflare Dashboard 手动部署
+### ❌ 未修复
+- GitHub 自动构建流程问题（Cloudflare Dashboard 手动部署可用）
 
 ### 🔧 当前运行版本
-- **版本:** 未知旧版本（用户在 Cloudflare Dashboard 回滚）
-- **入口文件:** `manual-worker/worker.js`（旧版，未包含 version 字段）
+- **版本:** v7.1.0-dev（commit `f92b52c`）
+- **入口文件:** `manual-worker/worker.js`（包含 VERSION、/ping、文件下载修复）
 - **服务地址:** https://tgapi.indevs.in
-- **问题:** `/stats` 不返回 `version` 字段
+- **部署方式:** Cloudflare Dashboard 手动部署（dev 分支）
 
 ---
 
@@ -201,9 +198,8 @@ curl -s https://tgapi.indevs.in/ping | python3 -m json.tool
 
 ## 🐛 已知问题
 
-1. **GitHub 自动构建失败** — 需要在 Cloudflare Dashboard 手动部署，或修复 CI/CD 配置
-2. **`/stats` 不显示 version** — 当前运行旧版代码，需要部署修复版本
-3. **Telegram 图片下载可能报 InvalidToken** — 旧版路径格式错误，需部署修复版本
+1. **GitHub 自动构建失败** — 需要在 Cloudflare Dashboard 手动部署
+2. **`functions/api/api.js` 未用于 Worker 部署** — 该文件使用 Pages Functions 格式（`export { onRequest as default }`），不兼容 Worker 运行时。如需使用 Pages 部署需调整配置
 
 ---
 
@@ -211,14 +207,18 @@ curl -s https://tgapi.indevs.in/ping | python3 -m json.tool
 
 ### 2026-07-17 关键修改
 
-| 提交 | 说明 |
-|------|------|
-| `d7fed24` | refactor: rename [[path]].js to api.js for Cloudflare build compatibility |
-| `42dca91` | fix: add default export for ES module compatibility |
-| `b233469` | chore: switch worker entry to functions/api/api.js |
-| `0cdb496` | feat: add /ping endpoint to test Telegram API connectivity |
-| `f9b04c4` | feat: add version info to stats endpoint |
-| `b281317` | fix: Telegram文件下载路径添加/file/前缀 (v7.1.1) |
+| 提交 | 说明 | 作者 |
+|------|------|------|
+| `d7fed24` | refactor: rename [[path]].js to api.js for Cloudflare build compatibility | Hermes |
+| `42dca91` | fix: add default export for ES module compatibility | Hermes |
+| `b233469` | chore: switch worker entry to functions/api/api.js | Hermes |
+| `0cdb496` | feat: add /ping endpoint to test Telegram API connectivity | Hermes |
+| `f9b04c4` | feat: add version info to stats endpoint | Hermes |
+| `b281317` | fix: Telegram文件下载路径添加/file/前缀 (v7.1.1) | Hermes |
+| `7e06d0d` | fix: 修复 sync-admin-html.mjs 重复行，添加 VERSION 和 /ping 到 worker.js | AtomCode |
+| `c84b47c` | fix: wrangler.toml main 指向 manual-worker/worker.js 修复 522 错误 | AtomCode |
+| `61f7fea` | fix: sync-admin-html.mjs 用 lastIndexOf 替代 indexOf 查找 ADMIN_HTML 结尾 | AtomCode |
+| `f92b52c` | fix: getTelegramFileBaseUrl 去掉重复的 /file/bot | AtomCode |
 
 ### 关键修复点
 
