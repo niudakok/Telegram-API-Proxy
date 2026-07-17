@@ -352,9 +352,15 @@ node scripts/check-proxy-consistency.mjs
 ### 分支规范
 
 ```bash
-main      # 稳定发布分支
-dev       # 开发分支
+main      # 稳定发布分支（VERSION tag: stable）
+dev       # 开发分支（VERSION tag: dev）
 ```
+
+**版本管理规则：**
+- `dev` 分支的 `VERSION` 常量中 `tag: 'dev'`，`main` 分支的 `VERSION` 常量中 `tag: 'stable'`
+- 开发在 `dev` 分支进行，完成后合并到 `main`
+- 合并前需更新 `version.json` 和 `doc/CHANGELOG.md`
+- 发布时打 Git 标签（如 `v7.1.0`）
 
 ---
 
