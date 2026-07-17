@@ -1,4 +1,5 @@
 const URL_PATH_REGEX = /^\/bot(?<bot_token>[^/]+)\/(?<api_method>[a-zA-Z0-9_]+)/i;
+const FILE_PATH_REGEX = /^\/file\/bot(?<bot_token>[^/]+)\/(?<file_id>.+)$/i;
 
 const RATE_LIMITS = {
     IP: { max: 100, window: 60000 },
@@ -91,6 +92,51 @@ let requestStats = {
     avgResponseTime: 0
 };
 
+
+
+function parseFileRequest(request) {
+    const url = new URL(request.url);
+    const match = url.pathname.match(FILE_PATH_REGEX);
+    if (!match) return { valid: false };
+    return {
+        valid: true,
+        botToken: match.groups.bot_token,
+        fileId: match.groups.file_id
+    };
+}
+
+async function proxyFileFromTelegram(fileInfo, env) {
+    const baseUrl = getTelegramFileBaseUrl(env);
+    const fileUrl = `${baseUrl}${fileInfo.botToken}/${fileInfo.fileId}`;
+    
+    const headers = new Headers();
+    headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
+    
+    try {
+        const response = await fetch(fileUrl, {
+            method: 'GET',
+            headers: headers,
+            redirect: 'follow'
+        });
+        
+        const respHeaders = new Headers(response.headers);
+        respHeaders.set('Access-Control-Allow-Origin', '*');
+        respHeaders.set('Cache-Control', 'public, max-age=3600'); // 1 hour cache
+        
+        return new Response(response.body, {
+            status: response.status,
+            headers: respHeaders
+        });
+    } catch (error) {
+        console.error('File download error:', error);
+        throw error;
+    }
+}
+
+function getTelegramFileBaseUrl(env) {
+    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '') + '/file/bot';
+}
+
 export async function onRequest(context) {
     const startTime = Date.now();
     const { request, env } = context;
@@ -107,6 +153,46 @@ export async function onRequest(context) {
         if (request.method === 'OPTIONS') {
             return handleCorsPreflightRequest();
         }
+
+    // 文件代理路径匹配
+    const rawPathName = url.pathname;
+    if (FILE_PATH_REGEX.test(rawPathName)) {
+        const startTime = Date.now();
+        try {
+            await cleanupExpiredData();
+
+            // 安全检查 - 但对于文件请求我们可能需要调整安全检查
+            const securityCheck = await performAdvancedSecurityChecks(request, env);
+            if (securityCheck.blocked) {
+                requestStats.blocked++;
+                return createErrorResponse(securityCheck.reason, securityCheck.status);
+            }
+
+            const fileInfo = parseFileRequest(request);
+            if (!fileInfo.valid) {
+                requestStats.blocked++;
+                return createErrorResponse('Invalid file request format', 400);
+            }
+
+            // Token 验证
+            const tokenValid = await validateBotTokenAdvanced(fileInfo.botToken, env);
+            if (!tokenValid) {
+                requestStats.blocked++;
+                return createErrorResponse('Invalid or unauthorized bot token', 401);
+            }
+
+            const response = await proxyFileFromTelegram(fileInfo, env);
+            updateStats(startTime, response.ok);
+            return response;
+
+        } catch (error) {
+            console.error('File proxy error:', error);
+            requestStats.failedRequests++;
+            return createErrorResponse(error.message, 500);
+        }
+    }
+
+
 
         const requestInfo = await parseRequest(request);
         if (!requestInfo.valid) {
