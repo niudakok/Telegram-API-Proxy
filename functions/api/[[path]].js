@@ -193,9 +193,18 @@ export async function onRequest(context) {
         }
     }
 
+    // 状态端点
+    if (rawPathName.endsWith('/stats')) {
+        return new Response(JSON.stringify(requestStats), {
+            status: 200,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
+    }
 
-
-        const requestInfo = await parseRequest(request);
+    const requestInfo = await parseRequest(request);
         if (!requestInfo.valid) {
             return createErrorResponse('Invalid request format', 400);
         }
