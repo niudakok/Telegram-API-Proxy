@@ -108,7 +108,8 @@ function parseFileRequest(request) {
 
 async function proxyFileFromTelegram(fileInfo, env) {
     const baseUrl = getTelegramFileBaseUrl(env);
-    const fileUrl = `${baseUrl}/${fileInfo.botToken}/${fileInfo.fileId}`;
+    // Telegram 文件下载路径：https://api.telegram.org/file/bot{token}/{file_path}
+    const fileUrl = `${baseUrl}/file/bot${fileInfo.botToken}/${fileInfo.fileId}`;
     
     const headers = new Headers();
     headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
