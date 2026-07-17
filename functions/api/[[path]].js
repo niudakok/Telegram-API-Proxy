@@ -111,6 +111,8 @@ async function proxyFileFromTelegram(fileInfo, env) {
     // Telegram 文件下载路径：https://api.telegram.org/file/bot{token}/{file_path}
     const fileUrl = `${baseUrl}/file/bot${fileInfo.botToken}/${fileInfo.fileId}`;
     
+    console.log(`[FILE_PROXY] botToken=${fileInfo.botToken} fileId=${fileInfo.fileId} url=${fileUrl}`);
+    
     const headers = new Headers();
     headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
     
@@ -121,6 +123,8 @@ async function proxyFileFromTelegram(fileInfo, env) {
             redirect: 'follow'
         });
         
+        console.log(`[FILE_PROXY] upstream status=${response.status}`);
+        
         const respHeaders = new Headers(response.headers);
         respHeaders.set('Access-Control-Allow-Origin', '*');
         respHeaders.set('Cache-Control', 'public, max-age=3600'); // 1 hour cache
@@ -130,7 +134,7 @@ async function proxyFileFromTelegram(fileInfo, env) {
             headers: respHeaders
         });
     } catch (error) {
-        console.error('File download error:', error);
+        console.error('[FILE_PROXY] fetch error:', error.message);
         throw error;
     }
 }
