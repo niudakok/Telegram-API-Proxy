@@ -75,7 +75,7 @@
 
 ## 🛠️ 快速部署
 
-> 📖 **详细喂奶级部署教程**（含每步截图级文字说明）请移步 [DEPLOY.md](DEPLOY.md)
+> 📖 **详细喂奶级部署教程**（含每步截图级文字说明）请移步 [DEPLOY.md](doc/DEPLOY.md)
 
 ### 方式一：Cloudflare Pages 部署（推荐，自动更新）
 
@@ -361,6 +361,8 @@ Telegram-API-Proxy/
 ├── css/style.css              ← 主页样式
 ├── js/main.js                 ← 主页交互
 ├── doc/                       ← 运维文档
+│   ├── DEPLOY.md              ← 部署文档
+│   ├── TESTING.md             ← 本地测试指南
 │   ├── DEVLOG.md              ← 开发运维日志（问题排查、修复记录）
 │   └── CHANGELOG.md           ← 版本更新记录
 ├── scripts/
@@ -368,7 +370,6 @@ Telegram-API-Proxy/
 │   └── check-proxy-consistency.mjs ← 一致性校验脚本
 ├── wrangler.toml              ← Cloudflare 部署配置
 ├── AGENTS.md                  ← AI 代理项目指令文件
-├── DEPLOY.md                  ← 部署文档
 ├── README.md                  ← 项目说明
 └── LICENSE                    ← GPL-3.0 许可证
 ```
