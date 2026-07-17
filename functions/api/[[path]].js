@@ -525,6 +525,8 @@ async function validateBotTokenAdvanced(token, env) {
     // === Bot Token 白名单校验 ===
     // 读取环境变量 ALLOWED_BOT_TOKENS（多个 Token 用英文逗号分隔）
     // 示例：ALLOWED_BOT_TOKENS=1234567890:AABBcc,9876543210:ZZYYxx
+    let allowlistConfigured = false;
+    
     if (env && env.ALLOWED_BOT_TOKENS) {
         const allowedTokens = env.ALLOWED_BOT_TOKENS
             .split(',')
@@ -535,12 +537,12 @@ async function validateBotTokenAdvanced(token, env) {
             console.warn(`[白名单] 拒绝未授权的 Bot Token（前缀）: ${token.substring(0, 10)}...`);
             return false;
         }
+        allowlistConfigured = true;
     } else {
-        // 未配置白名单时，拒绝所有请求（保证安全）
-        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，拒绝请求');
-        return false;
+        // 未配置白名单时，跳过白名单校验，继续格式验证
+        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，跳过白名单校验，仅进行格式验证');
     }
-    // === 白名单校验通过，进行 Token 格式验证 ===
+    // === 白名单校验通过（或跳过），进行 Token 格式验证 ===
 
     const cached = tokenValidationCache.get(token);
     if (cached && Date.now() < cached.expires) {
@@ -548,13 +550,14 @@ async function validateBotTokenAdvanced(token, env) {
     }
     
     try {
-        if (!token || token.length < 40 || token.length > 200 || !token.includes(':')) {
+        // 基本格式检查（更宽松：支持 30-200 字符的 token）
+        if (!token || token.length < 30 || token.length > 200 || !token.includes(':')) {
             tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
             return false;
         }
         
         const [botId, botHash] = token.split(':');
-        if (!botId || !botHash || botId.length < 8 || botHash.length < 30) {
+        if (!botId || !botHash || botId.length < 5 || botHash.length < 20) {
             tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
             return false;
         }

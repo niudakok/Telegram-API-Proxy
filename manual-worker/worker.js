@@ -179,17 +179,19 @@ async function handleRequest(request, env) {
 
 async function validateBotToken(token, env) {
     const allowedTokens = env.ALLOWED_BOT_TOKENS;
-    if (!allowedTokens) {
-        console.error('[Security] ALLOWED_BOT_TOKENS not configured.');
-        return false;
+    // 如果未配置 ALLOWED_BOT_TOKENS，跳过白名单校验，仅进行格式验证
+    if (allowedTokens) {
+        const allowedList = allowedTokens.split(',').map(t => t.trim()).filter(t => t.length > 0);
+        if (!allowedList.includes(token)) {
+            console.warn(`[白名单] 拒绝未授权的 Bot Token（前缀）: ${token.substring(0, 10)}...`);
+            return false;
+        }
+    } else {
+        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，跳过白名单校验，仅进行格式验证');
     }
 
-    const allowedList = allowedTokens.split(',').map(t => t.trim()).filter(t => t.length > 0);
-    if (!allowedList.includes(token)) {
-        return false;
-    }
-
-    if (!token.includes(':') || token.length < 30) return false;
+    // Token 格式验证（更宽松：支持 30-200 字符的 token）
+    if (!token.includes(':') || token.length < 30 || token.length > 200) return false;
     return true;
 }
 
