@@ -39,4 +39,4 @@ The repo was previously worked on by another agent who fixed several issues:
 4. **Path traversal detection**: `new URL(request.url)` normalizes `../` away. Check the raw `request.url` string instead. Use `%2e%2e%2f` (encoded form) in test payloads.
 5. **Version info is dual-maintained**: in `version.json` AND as a `VERSION` constant at the top of `api.js` (line 3). Keep both in sync.
 6. **Pages vs Worker token validation differs** — a token that works in Worker mode may fail in Pages mode. The test token `1234567890:AAGkLmNoPqRsTuVwXyZ1234567890X` (41 chars) satisfies both.
-7. **`wrangler.toml` `main` field** points to `functions/api/api.js` — this is the Pages Functions entry. Do NOT change it to point to `manual-worker/worker.js`.
+7. **`wrangler.toml` `main` field** must point to `manual-worker/worker.js` for Workers deployments. The `functions/api/api.js` uses `export { onRequest as default }` (Pages Functions format), which is **incompatible** with Workers — Workers expect `export default { fetch(...) }`. Setting `main` to `api.js` will cause the Worker to fail with HTTP 522.

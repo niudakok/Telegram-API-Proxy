@@ -1,5 +1,5 @@
 name = 'tap'
-main = "functions/api/api.js"
+main = "manual-worker/worker.js"
 compatibility_date = "2023-12-01"
 
 # 环境变量请直接在 Cloudflare 控制台的 Settings -> Variables 中配置，
