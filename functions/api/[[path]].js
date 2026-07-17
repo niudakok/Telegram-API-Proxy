@@ -196,7 +196,10 @@ export async function onRequest(context) {
 
     // 状态端点
     if (rawPathName.endsWith('/stats')) {
-        return new Response(JSON.stringify(requestStats), {
+        return new Response(JSON.stringify({
+            ...requestStats,
+            version: VERSION
+        }), {
             status: 200,
             headers: {
                 'Content-Type': 'application/json',
