@@ -18,7 +18,7 @@ const start = worker.indexOf(startMarker);
 if (start === -1) {
   throw new Error('Cannot find `const ADMIN_HTML = ` in manual-worker/worker.js');
 }
-const end = worker.indexOf('`;', start);
+const end = worker.lastIndexOf('`;');
 if (end === -1) {
   throw new Error('Cannot find end of ADMIN_HTML template (`;) in manual-worker/worker.js');
 }
