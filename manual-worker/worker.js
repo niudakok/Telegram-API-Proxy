@@ -224,7 +224,7 @@ function parseFileRequest(request) {
     if (!match) return { valid: false };
     return {
         valid: true,
-        botToken: match.groups.bot_token,
+        botToken: decodeURIComponent(match.groups.bot_token),
         fileId: match.groups.file_id
     };
 }
@@ -588,7 +588,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">61f7fea</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">df83d81</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
