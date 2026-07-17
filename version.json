@@ -1,0 +1,8 @@
+{
+  "version": "7.1.0",
+  "build": "20260717",
+  "changelog": [
+    "fix: URL_PATH_REGEX 用斜杠分隔 token 和 method（正确格式）",
+    "fix: sanitizeHeaders 保留 authorization 头以正常转发 Telegram 授权"
+  ]
+}

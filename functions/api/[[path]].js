@@ -1,5 +1,6 @@
 const URL_PATH_REGEX = /^\/bot(?<bot_token>[^/]+)\/(?<api_method>[a-zA-Z0-9_]+)/i;
 const FILE_PATH_REGEX = /^\/file\/bot(?<bot_token>[^/]+)\/(?<file_id>.+)$/i;
+const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'dev' };
 
 const RATE_LIMITS = {
     IP: { max: 100, window: 60000 },
@@ -743,7 +744,8 @@ function sanitizeHeaders(headers) {
     const forbiddenHeaders = [
         'cf-connecting-ip', 'cf-ipcountry', 'cf-ray', 'cf-visitor',
         'x-forwarded-for', 'x-real-ip', 'x-forwarded-proto',
-        'host', 'origin', 'referer', 'cookie', 'authorization'
+        'host', 'origin', 'referer', 'cookie'
+        // 保留 authorization 头，用于转发 Telegram API 授权
     ];
     
     forbiddenHeaders.forEach(header => headers.delete(header));
