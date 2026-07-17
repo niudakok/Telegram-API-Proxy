@@ -1,6 +1,6 @@
 const URL_PATH_REGEX = /^\/bot(?<bot_token>[^/]+)\/(?<api_method>[a-zA-Z0-9_]+)/i;
 const FILE_PATH_REGEX = /^\/file\/bot(?<bot_token>[^/]+)\/(?<file_id>.+)$/i;
-const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'dev' };
+const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'stable' };
 
 const RATE_LIMITS = {
     IP: { max: 100, window: 60000 },

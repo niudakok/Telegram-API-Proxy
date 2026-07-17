@@ -12,7 +12,7 @@ const RATE_LIMITS = {
 };
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
-const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'dev' };
+const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'stable' };
 
 let stats = {
     startTime: Date.now(),
@@ -588,7 +588,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">f063cc6</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">99ce6b5</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
