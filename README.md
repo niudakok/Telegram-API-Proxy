@@ -33,6 +33,16 @@
 - **多平台支持**：同时支持 Cloudflare Workers 和 Cloudflare Pages 部署。
 - **隐私安全**：透明转发请求，不存储任何消息内容。
 
+### 🌐 前台页面
+
+访问代理域名根路径（如 `https://tgproxy.pages.dev`）即可看到前台页面，展示服务状态、API 使用示例和系统信息：
+
+- 状态指示器：实时显示系统运行状态
+- API 使用示例：提供 Python、curl 等代码示例，方便快速集成
+- 版本信息：显示当前部署版本号
+
+前台页面由 `index.html` 提供，样式文件在 `css/style.css`，交互脚本在 `js/main.js`。
+
 ---
 
 ## ✨ 功能特性

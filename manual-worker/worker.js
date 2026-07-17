@@ -588,7 +588,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">bc5caa5</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">f063cc6</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
