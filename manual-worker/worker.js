@@ -231,7 +231,8 @@ function parseFileRequest(request) {
 
 async function proxyFileFromTelegram(fileInfo, env) {
     const baseUrl = getTelegramFileBaseUrl(env);
-    const fileUrl = `${baseUrl}${fileInfo.botToken}/${fileInfo.fileId}`;
+    // Telegram 文件下载路径：https://api.telegram.org/file/bot{token}/{file_path}
+    const fileUrl = `${baseUrl}/file/bot${fileInfo.botToken}/${fileInfo.fileId}`;
     
     const headers = new Headers();
     headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
@@ -296,7 +297,7 @@ function getTelegramBaseUrl(env) {
 }
 
 function getTelegramFileBaseUrl(env) {
-    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '') + '/file/bot';
+    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '');
 }
 
 async function proxyToTelegram(request, info, env) {
@@ -587,7 +588,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">c84b47c</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">61f7fea</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
