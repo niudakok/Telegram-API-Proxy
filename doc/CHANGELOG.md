@@ -10,6 +10,7 @@
 - **ADMIN_HTML 模板字符串截断** — `sync-admin-html.mjs` 用 `indexOf` 查找 `` `; `` 结束标记，但 admin.html 中 JS 模板字面量也包含 `\`;`，导致截断错误。改用 `lastIndexOf` 修复。
 - **`wrangler.toml` `main` 指向错误** — 指向 `functions/api/api.js`（Pages Functions 格式 `export { onRequest as default }`），Worker 运行时无法识别，导致 HTTP 522。改回 `manual-worker/worker.js`（Worker 原生格式 `export default { fetch(...) }`）。
 - **`sync-admin-html.mjs` 重复行** — 删除了被覆盖的重复 `const html` 和 `const next` 声明。
+- **token URL 编码导致文件下载 401** — `python-telegram-bot` 库的 `File._get_encoded_url()` 会将 `:` 编码为 `%3A`，代理解析 token 时拿到的是编码后的字符串，与白名单不匹配导致 401。`parseFileRequest` 中添加 `decodeURIComponent()` 修复。
 
 ### 新增
 

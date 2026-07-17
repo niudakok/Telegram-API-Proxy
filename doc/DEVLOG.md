@@ -219,6 +219,7 @@ curl -s https://tgapi.indevs.in/ping | python3 -m json.tool
 | `c84b47c` | fix: wrangler.toml main 指向 manual-worker/worker.js 修复 522 错误 | AtomCode |
 | `61f7fea` | fix: sync-admin-html.mjs 用 lastIndexOf 替代 indexOf 查找 ADMIN_HTML 结尾 | AtomCode |
 | `f92b52c` | fix: getTelegramFileBaseUrl 去掉重复的 /file/bot | AtomCode |
+| `47ea2da` | fix: parseFileRequest 对 bot_token 做 URL 解码，修复文件下载 401 | AtomCode |
 
 ### 关键修复点
 
@@ -227,6 +228,7 @@ curl -s https://tgapi.indevs.in/ping | python3 -m json.tool
 3. **proxyFileFromTelegram** — 添加 `/file/` 前缀到 Telegram 文件下载 URL
 4. **ES Module 兼容** — 添加默认导出 `export { onRequest as default }`
 5. **版本信息** — `/stats` 和 `/ping` 端点返回 `VERSION` 对象
+6. **parseFileRequest URL 解码** — `python-telegram-bot` 库的 `_get_encoded_url()` 会将 `:` 编码为 `%3A`，导致 token 与白名单不匹配。添加 `decodeURIComponent` 修复。
 
 ---
 
