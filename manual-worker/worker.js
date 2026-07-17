@@ -12,7 +12,7 @@ const RATE_LIMITS = {
 };
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
-const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'stable' };
+const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'dev' };
 
 let stats = {
     startTime: Date.now(),

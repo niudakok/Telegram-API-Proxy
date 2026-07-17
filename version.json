@@ -1,7 +1,7 @@
 {
   "version": "7.1.0",
   "build": "20260717",
-  "tag": "stable",
+  "tag": "dev",
   "changelog": [
     "fix: parseFileRequest 对 bot_token 做 URL 解码，修复 python-telegram-bot 库编码 : 为 %3A 导致 token 白名单验证失败",
     "fix: getTelegramFileBaseUrl 去掉重复的 /file/bot，修复文件下载双重路径",
