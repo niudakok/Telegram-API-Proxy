@@ -277,7 +277,7 @@ Pages 版：    /api/bot<TOKEN>/<METHOD>       → ✅
 Pages 版错误：/bot<TOKEN>/<METHOD>           → ❌ 404
 ```
 
-**原因：** Pages Functions 的 `[[path]].js` 匹配的是 `/api/*` 路径。代码内部会在 `parseRequest` 中做 `pathname.replace('/api', '')` 去掉前缀。
+**原因：** Pages Functions 的 `api.js` 匹配的是 `/api/*` 路径。代码内部会在 `parseRequest` 中做 `pathname.replace('/api', '')` 去掉前缀。
 
 **解决：** 根据部署版本使用正确的 URL：
 

@@ -1,0 +1,967 @@
+const URL_PATH_REGEX = /^\/bot(?<bot_token>[^/]+)\/(?<api_method>[a-zA-Z0-9_]+)/i;
+const FILE_PATH_REGEX = /^\/file\/bot(?<bot_token>[^/]+)\/(?<file_id>.+)$/i;
+const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'dev' };
+
+const RATE_LIMITS = {
+    IP: { max: 100, window: 60000 },
+    TOKEN: { max: 200, window: 60000 },
+    GLOBAL: { max: 5000, window: 60000 },
+    BURST: { max: 10, window: 1000 }
+};
+
+const CIRCUIT_BREAKER = {
+    FAILURE_THRESHOLD: 5,
+    TIMEOUT: 30000,
+    HALF_OPEN_MAX_CALLS: 3
+};
+
+const RETRY_CONFIG = {
+    MAX_RETRIES: 3,
+    INITIAL_DELAY: 1000,
+    MAX_DELAY: 8000,
+    BACKOFF_FACTOR: 2
+};
+
+const requestCounters = {
+    ip: new Map(),
+    token: new Map(),
+    burst: new Map(),
+    global: { count: 0, resetTime: Date.now() + RATE_LIMITS.GLOBAL.window }
+};
+
+const circuitBreakers = new Map();
+const tokenValidationCache = new Map();
+const suspiciousIPs = new Map();
+const CACHE_TTL = 300000;
+const SUSPICIOUS_THRESHOLD = 10;
+
+const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
+const MAX_BODY_SIZE = 50 * 1024 * 1024;
+const ALLOWED_COUNTRIES = []; // 已去除国家限制，允许所有地区访问
+const BLOCKED_COUNTRIES = [];
+const ALLOWED_USER_AGENTS = /telegram|bot|curl|postman|httpie|axios|fetch/i;
+const BLOCKED_USER_AGENTS = /scanner|crawler|spider|bot.*attack|sqlmap|nikto|nmap/i;
+
+const TELEGRAM_ENDPOINTS = [
+    'api.telegram.org'
+];
+
+const CACHE_CONFIGS = {
+    getChatMember: { ttl: 300, edge: true },
+    getMe: { ttl: 3600, edge: true },
+    getUpdates: { ttl: 0, edge: false },
+    sendMessage: { ttl: 0, edge: false },
+    sendPhoto: { ttl: 0, edge: false },
+    sendDocument: { ttl: 0, edge: false },
+    sendVideo: { ttl: 0, edge: false },
+    sendAudio: { ttl: 0, edge: false },
+    sendVoice: { ttl: 0, edge: false },
+    sendAnimation: { ttl: 0, edge: false },
+    sendSticker: { ttl: 0, edge: false },
+    sendVideoNote: { ttl: 0, edge: false },
+    sendMediaGroup: { ttl: 0, edge: false },
+    getChat: { ttl: 600, edge: true },
+    getChatAdministrators: { ttl: 1800, edge: true }
+};
+
+const MALICIOUS_PATTERNS = [
+    /(\.\.|\/\.\/|\\\.\\|%2e%2e|%252e%252e)/i,
+    /<script[^>]*>.*?<\/script>/gi,
+    /javascript:/gi,
+    /vbscript:/gi,
+    /onload\s*=/gi,
+    /onerror\s*=/gi,
+    /eval\s*\(/gi,
+    /union\s+select/gi,
+    /(\bor\b|\band\b)\s+\d+\s*=\s*\d+/gi
+];
+
+const FILE_UPLOAD_METHODS = new Set([
+    'sendPhoto', 'sendDocument', 'sendVideo', 'sendAudio', 
+    'sendVoice', 'sendAnimation', 'sendSticker', 'sendVideoNote', 
+    'sendMediaGroup', 'setChatPhoto', 'uploadStickerFile',
+    'createNewStickerSet', 'addStickerToSet', 'setStickerSetThumb'
+]);
+
+let requestStats = {
+    total: 0,
+    errors: 0,
+    rateLimited: 0,
+    blocked: 0,
+    retries: 0,
+    lastReset: Date.now(),
+    avgResponseTime: 0
+};
+
+
+
+function parseFileRequest(request) {
+    const url = new URL(request.url);
+    const match = url.pathname.match(FILE_PATH_REGEX);
+    if (!match) return { valid: false };
+    return {
+        valid: true,
+        botToken: match.groups.bot_token,
+        fileId: match.groups.file_id
+    };
+}
+
+async function proxyFileFromTelegram(fileInfo, env) {
+    const baseUrl = getTelegramFileBaseUrl(env);
+    // Telegram 文件下载路径：https://api.telegram.org/file/bot{token}/{file_path}
+    const fileUrl = `${baseUrl}/file/bot${fileInfo.botToken}/${fileInfo.fileId}`;
+    
+    console.log(`[FILE_PROXY] botToken=${fileInfo.botToken} fileId=${fileInfo.fileId} url=${fileUrl}`);
+    
+    const headers = new Headers();
+    headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
+    
+    try {
+        const response = await fetch(fileUrl, {
+            method: 'GET',
+            headers: headers,
+            redirect: 'follow'
+        });
+        
+        console.log(`[FILE_PROXY] upstream status=${response.status}`);
+        
+        const respHeaders = new Headers(response.headers);
+        respHeaders.set('Access-Control-Allow-Origin', '*');
+        respHeaders.set('Cache-Control', 'public, max-age=3600'); // 1 hour cache
+        
+        return new Response(response.body, {
+            status: response.status,
+            headers: respHeaders
+        });
+    } catch (error) {
+        console.error('[FILE_PROXY] fetch error:', error.message);
+        throw error;
+    }
+}
+
+function getTelegramFileBaseUrl(env) {
+    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '');
+}
+
+export async function onRequest(context) {
+    const startTime = Date.now();
+    const { request, env } = context;
+    
+    try {
+        await cleanupExpiredData();
+        
+        const securityCheck = await performAdvancedSecurityChecks(request, env);
+        if (securityCheck.blocked) {
+            requestStats.blocked++;
+            return createErrorResponse(securityCheck.reason, securityCheck.status);
+        }
+
+        if (request.method === 'OPTIONS') {
+            return handleCorsPreflightRequest();
+        }
+
+    // 文件代理路径匹配
+    const rawPathName = url.pathname;
+    if (FILE_PATH_REGEX.test(rawPathName)) {
+        const startTime = Date.now();
+        try {
+            await cleanupExpiredData();
+
+            // 安全检查 - 但对于文件请求我们可能需要调整安全检查
+            const securityCheck = await performAdvancedSecurityChecks(request, env);
+            if (securityCheck.blocked) {
+                requestStats.blocked++;
+                return createErrorResponse(securityCheck.reason, securityCheck.status);
+            }
+
+            const fileInfo = parseFileRequest(request);
+            if (!fileInfo.valid) {
+                requestStats.blocked++;
+                return createErrorResponse('Invalid file request format', 400);
+            }
+
+            // Token 验证
+            const tokenValid = await validateBotTokenAdvanced(fileInfo.botToken, env);
+            if (!tokenValid) {
+                requestStats.blocked++;
+                return createErrorResponse('Invalid or unauthorized bot token', 401);
+            }
+
+            const response = await proxyFileFromTelegram(fileInfo, env);
+            updateStats(startTime, response.ok);
+            return response;
+
+        } catch (error) {
+            console.error('File proxy error:', error);
+            requestStats.failedRequests++;
+            return createErrorResponse(error.message, 500);
+        }
+    }
+
+    // 状态端点
+    if (rawPathName.endsWith('/stats')) {
+        return new Response(JSON.stringify({
+            ...requestStats,
+            version: VERSION
+        }), {
+            status: 200,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
+    }
+
+    // 测试端点：直接测试 Telegram API 连通性（绕过白名单验证）
+    if (rawPathName.endsWith('/ping')) {
+        const testUrl = 'https://api.telegram.org/bot' + (env.ALLOWED_BOT_TOKENS ? env.ALLOWED_BOT_TOKENS.split(',')[0] : '123456:AAAA') + '/getMe';
+        let upStatus = 0;
+        try {
+            const resp = await fetch(testUrl, { method: 'GET', cf: { timeout: 10 } });
+            upStatus = resp.status;
+        } catch(e) {
+            upStatus = -1;
+        }
+        return new Response(JSON.stringify({
+            version: VERSION,
+            allowedTokensConfigured: !!env.ALLOWED_BOT_TOKENS,
+            testUrl,
+            upstreamStatus: upStatus,
+            telegramApiAccessible: upStatus !== -1
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+    }
+
+    const requestInfo = await parseRequest(request);
+        if (!requestInfo.valid) {
+            return createErrorResponse('Invalid request format', 400);
+        }
+
+        const circuitState = checkCircuitBreaker(requestInfo.clientIP);
+        if (circuitState === 'OPEN') {
+            return createErrorResponse('Service temporarily unavailable', 503);
+        }
+
+        const rateLimitResult = await checkAdvancedRateLimit(requestInfo.clientIP, requestInfo.botToken);
+        if (rateLimitResult.limited) {
+            requestStats.rateLimited++;
+            return createRateLimitResponse(rateLimitResult.retryAfter);
+        }
+
+        const tokenValid = await validateBotTokenAdvanced(requestInfo.botToken, env);
+        if (!tokenValid) {
+            await recordSuspiciousActivity(requestInfo.clientIP, 'invalid_token');
+            return createErrorResponse('Invalid bot token', 401);
+        }
+
+        const response = await proxyToTelegramWithRetry(request, requestInfo, env);
+        
+        updateCircuitBreaker(requestInfo.clientIP, response.ok);
+        updateStats(startTime, response.ok);
+
+        return response;
+
+    } catch (error) {
+        console.error('Proxy error:', error);
+        requestStats.errors++;
+        updateCircuitBreaker(getClientIP(request), false);
+        return handleProxyError(error);
+    }
+}
+
+async function cleanupExpiredData() {
+    const now = Date.now();
+    
+    for (const [token, data] of tokenValidationCache.entries()) {
+        if (now >= data.expires) {
+            tokenValidationCache.delete(token);
+        }
+    }
+    
+    for (const [ip, data] of suspiciousIPs.entries()) {
+        if (now >= data.expires) {
+            suspiciousIPs.delete(ip);
+        }
+    }
+    
+    for (const [key, breaker] of circuitBreakers.entries()) {
+        if (now - breaker.lastFailureTime > CIRCUIT_BREAKER.TIMEOUT) {
+            breaker.state = 'CLOSED';
+            breaker.failureCount = 0;
+        }
+    }
+    
+    if (now - requestStats.lastReset > 3600000) {
+        requestStats = {
+            total: 0,
+            errors: 0,
+            rateLimited: 0,
+            blocked: 0,
+            retries: 0,
+            lastReset: now,
+            avgResponseTime: 0
+        };
+    }
+}
+
+async function performAdvancedSecurityChecks(request, env) {
+    const clientIP = getClientIP(request);
+    const userAgent = request.headers.get('user-agent') || '';
+    const country = request.headers.get('cf-ipcountry');
+    const referer = request.headers.get('referer') || '';
+    const contentType = request.headers.get('content-type') || '';
+
+    if (!ALLOWED_METHODS.includes(request.method)) {
+        return { blocked: true, reason: 'Method not allowed', status: 405 };
+    }
+
+    const contentLength = request.headers.get('content-length');
+    if (contentLength) {
+        const bodySize = parseInt(contentLength);
+        if (bodySize > MAX_BODY_SIZE) {
+            return { blocked: true, reason: 'Request too large', status: 413 };
+        }
+    }
+
+    if (ALLOWED_COUNTRIES.length > 0) {
+        if (!ALLOWED_COUNTRIES.includes(country)) {
+            return { blocked: true, reason: 'Geographic restriction', status: 403 };
+        }
+    } else if (BLOCKED_COUNTRIES.length > 0) {
+        if (BLOCKED_COUNTRIES.includes(country)) {
+            return { blocked: true, reason: 'Geographic restriction', status: 403 };
+        }
+    }
+
+    if (BLOCKED_USER_AGENTS.test(userAgent)) {
+        await recordSuspiciousActivity(clientIP, 'blocked_user_agent');
+        return { blocked: true, reason: 'Blocked user agent', status: 403 };
+    }
+
+    if (!ALLOWED_USER_AGENTS.test(userAgent) && userAgent.length < 10) {
+        await recordSuspiciousActivity(clientIP, 'suspicious_user_agent');
+        return { blocked: true, reason: 'Invalid user agent', status: 403 };
+    }
+
+    const suspicious = suspiciousIPs.get(clientIP);
+    if (suspicious && suspicious.count >= SUSPICIOUS_THRESHOLD) {
+        return { blocked: true, reason: 'IP temporarily blocked', status: 429 };
+    }
+
+    const url = new URL(request.url);
+    const fullPath = url.pathname + url.search;
+    
+    // 路径遍历检测：同时检查规范化前和规范化后的路径
+    // request.url 保留原始路径（含 ../），url.pathname 已被 URL 类规范化
+    const rawPath = decodeURIComponent(request.url.replace(/^https?:\/\/[^/]+/, ''));
+    const hasPathTraversal = /(\.\.\/|\.\.\\|%2e%2e%2f|%252e%252e%252f)/i.test(rawPath);
+    
+    for (const pattern of MALICIOUS_PATTERNS) {
+        if (pattern.test(fullPath) || hasPathTraversal || pattern.test(referer)) {
+            await recordSuspiciousActivity(clientIP, 'malicious_pattern');
+            return { blocked: true, reason: 'Malicious request detected', status: 400 };
+        }
+    }
+
+    if (request.method === 'POST' && contentType.includes('multipart/form-data')) {
+        const boundary = contentType.split('boundary=')[1];
+        if (boundary && boundary.length > 200) {
+            return { blocked: true, reason: 'Invalid multipart boundary', status: 400 };
+        }
+    }
+
+    const xForwardedFor = request.headers.get('x-forwarded-for');
+    if (xForwardedFor && xForwardedFor.split(',').length > 10) {
+        await recordSuspiciousActivity(clientIP, 'excessive_forwarded_headers');
+        return { blocked: true, reason: 'Suspicious request headers', status: 400 };
+    }
+
+    return { blocked: false };
+}
+
+async function recordSuspiciousActivity(ip, type) {
+    const now = Date.now();
+    const existing = suspiciousIPs.get(ip) || { count: 0, types: new Set(), expires: now + 3600000 };
+    
+    existing.count++;
+    existing.types.add(type);
+    existing.lastActivity = now;
+    
+    suspiciousIPs.set(ip, existing);
+}
+
+async function parseRequest(request) {
+    const url = new URL(request.url);
+    const path = url.pathname.replace('/api', '');
+    const clientIP = getClientIP(request);
+    
+    if (!URL_PATH_REGEX.test(path)) {
+        return { valid: false };
+    }
+    
+    const match = path.match(URL_PATH_REGEX);
+    const botToken = match?.groups?.bot_token || '';
+    const apiMethod = match?.groups?.api_method || '';
+    
+    if (botToken.length > 200 || apiMethod.length > 50) {
+        return { valid: false };
+    }
+    
+    return {
+        valid: true,
+        clientIP,
+        botToken,
+        apiMethod,
+        path,
+        url
+    };
+}
+
+function getClientIP(request) {
+    const cfIP = request.headers.get('cf-connecting-ip');
+    if (cfIP) return cfIP;
+    
+    const xForwardedFor = request.headers.get('x-forwarded-for');
+    if (xForwardedFor) {
+        const firstIP = xForwardedFor.split(',')[0]?.trim();
+        if (firstIP && /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(firstIP)) {
+            return firstIP;
+        }
+    }
+    
+    return request.headers.get('x-real-ip') || 'unknown';
+}
+
+async function checkAdvancedRateLimit(clientIP, botToken) {
+    const now = Date.now();
+    
+    cleanupCounters(now);
+    
+    if (requestCounters.global.count >= RATE_LIMITS.GLOBAL.max) {
+        const retryAfter = Math.ceil((requestCounters.global.resetTime - now) / 1000);
+        return { limited: true, retryAfter };
+    }
+    
+    const burstKey = `burst_${clientIP}`;
+    const burstCount = getCounterValue(requestCounters.burst, burstKey, now, RATE_LIMITS.BURST.window);
+    if (burstCount >= RATE_LIMITS.BURST.max) {
+        return { limited: true, retryAfter: 1 };
+    }
+    
+    const ipKey = `ip_${clientIP}`;
+    const ipCount = getCounterValue(requestCounters.ip, ipKey, now, RATE_LIMITS.IP.window);
+    if (ipCount >= RATE_LIMITS.IP.max) {
+        return { limited: true, retryAfter: 60 };
+    }
+    
+    const tokenKey = `token_${botToken}`;
+    const tokenCount = getCounterValue(requestCounters.token, tokenKey, now, RATE_LIMITS.TOKEN.window);
+    if (tokenCount >= RATE_LIMITS.TOKEN.max) {
+        return { limited: true, retryAfter: 60 };
+    }
+    
+    incrementCounter(requestCounters.burst, burstKey, now, RATE_LIMITS.BURST.window);
+    incrementCounter(requestCounters.ip, ipKey, now, RATE_LIMITS.IP.window);
+    incrementCounter(requestCounters.token, tokenKey, now, RATE_LIMITS.TOKEN.window);
+    requestCounters.global.count++;
+    
+    return { limited: false };
+}
+
+function cleanupCounters(now) {
+    if (now >= requestCounters.global.resetTime) {
+        requestCounters.global.count = 0;
+        requestCounters.global.resetTime = now + RATE_LIMITS.GLOBAL.window;
+    }
+    
+    const counterMaps = [requestCounters.ip, requestCounters.token, requestCounters.burst];
+    
+    for (const counterMap of counterMaps) {
+        for (const [key, data] of counterMap.entries()) {
+            if (now >= data.resetTime) {
+                counterMap.delete(key);
+            }
+        }
+    }
+}
+
+function getCounterValue(counterMap, key, now, window = RATE_LIMITS.IP.window) {
+    const data = counterMap.get(key);
+    if (!data || now >= data.resetTime) {
+        return 0;
+    }
+    return data.count;
+}
+
+function incrementCounter(counterMap, key, now, window = RATE_LIMITS.IP.window) {
+    const existing = counterMap.get(key);
+    if (!existing || now >= existing.resetTime) {
+        counterMap.set(key, {
+            count: 1,
+            resetTime: now + window
+        });
+    } else {
+        existing.count++;
+    }
+}
+
+function checkCircuitBreaker(clientIP) {
+    const breaker = circuitBreakers.get(clientIP);
+    if (!breaker) return 'CLOSED';
+    
+    const now = Date.now();
+    
+    if (breaker.state === 'OPEN') {
+        if (now - breaker.lastFailureTime >= CIRCUIT_BREAKER.TIMEOUT) {
+            breaker.state = 'HALF_OPEN';
+            breaker.halfOpenAttempts = 0;
+            return 'HALF_OPEN';
+        }
+        return 'OPEN';
+    }
+    
+    if (breaker.state === 'HALF_OPEN') {
+        if (breaker.halfOpenAttempts >= CIRCUIT_BREAKER.HALF_OPEN_MAX_CALLS) {
+            return 'OPEN';
+        }
+        breaker.halfOpenAttempts++;
+    }
+    
+    return breaker.state;
+}
+
+function updateCircuitBreaker(clientIP, success) {
+    let breaker = circuitBreakers.get(clientIP);
+    if (!breaker) {
+        breaker = {
+            state: 'CLOSED',
+            failureCount: 0,
+            lastFailureTime: 0,
+            halfOpenAttempts: 0
+        };
+        circuitBreakers.set(clientIP, breaker);
+    }
+    
+    if (success) {
+        if (breaker.state === 'HALF_OPEN') {
+            breaker.state = 'CLOSED';
+            breaker.failureCount = 0;
+        } else if (breaker.state === 'CLOSED') {
+            breaker.failureCount = Math.max(0, breaker.failureCount - 1);
+        }
+    } else {
+        breaker.failureCount++;
+        breaker.lastFailureTime = Date.now();
+        
+        if (breaker.failureCount >= CIRCUIT_BREAKER.FAILURE_THRESHOLD) {
+            breaker.state = 'OPEN';
+        }
+    }
+}
+
+async function validateBotTokenAdvanced(token, env) {
+    // === Bot Token 白名单校验 ===
+    // 读取环境变量 ALLOWED_BOT_TOKENS（多个 Token 用英文逗号分隔）
+    // 示例：ALLOWED_BOT_TOKENS=1234567890:AABBcc,9876543210:ZZYYxx
+    let allowlistConfigured = false;
+    
+    if (env && env.ALLOWED_BOT_TOKENS) {
+        const allowedTokens = env.ALLOWED_BOT_TOKENS
+            .split(',')
+            .map(t => t.trim())
+            .filter(t => t.length > 0);
+        if (!allowedTokens.includes(token)) {
+            // Token 不在白名单中，直接拒绝，不缓存结果
+            console.warn(`[白名单] 拒绝未授权的 Bot Token（前缀）: ${token.substring(0, 10)}...`);
+            return false;
+        }
+        allowlistConfigured = true;
+    } else {
+        // 未配置白名单时，跳过白名单校验，继续格式验证
+        console.warn('[白名单] 环境变量 ALLOWED_BOT_TOKENS 未配置，跳过白名单校验，仅进行格式验证');
+    }
+    // === 白名单校验通过（或跳过），进行 Token 格式验证 ===
+
+    const cached = tokenValidationCache.get(token);
+    if (cached && Date.now() < cached.expires) {
+        return cached.valid;
+    }
+    
+    try {
+        // 基本格式检查（更宽松：支持 30-200 字符的 token）
+        if (!token || token.length < 30 || token.length > 200 || !token.includes(':')) {
+            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
+            return false;
+        }
+        
+        const [botId, botHash] = token.split(':');
+        if (!botId || !botHash || botId.length < 5 || botHash.length < 20) {
+            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
+            return false;
+        }
+        
+        if (!/^\d+$/.test(botId)) {
+            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
+            return false;
+        }
+        
+        if (!/^[A-Za-z0-9_-]+$/.test(botHash)) {
+            tokenValidationCache.set(token, { valid: false, expires: Date.now() + CACHE_TTL });
+            return false;
+        }
+        
+        tokenValidationCache.set(token, { valid: true, expires: Date.now() + CACHE_TTL });
+        return true;
+        
+    } catch (error) {
+        console.error('Token 验证失败:', error);
+        return false;
+    }
+}
+
+async function proxyToTelegramWithRetry(request, requestInfo, env) {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= RETRY_CONFIG.MAX_RETRIES; attempt++) {
+        try {
+            if (attempt > 0) {
+                requestStats.retries++;
+                const delay = Math.min(
+                    RETRY_CONFIG.INITIAL_DELAY * Math.pow(RETRY_CONFIG.BACKOFF_FACTOR, attempt - 1),
+                    RETRY_CONFIG.MAX_DELAY
+                );
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+            
+            const response = await proxyToTelegram(request, requestInfo, attempt, env);
+            
+            if (response.ok || response.status < 500) {
+                return response;
+            }
+            
+            lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+            
+        } catch (error) {
+            lastError = error;
+            
+            // 仅 Cloudflare 连接池满（EXCEEDED_CONCURRENT）时重试
+            // 超时和其他错误直接返回，让客户端自己做重试
+            if (error.message.includes('EXCEEDED_CONCURRENT')
+                || error.message.includes('Connection') && error.message.includes('limit')) {
+                continue;
+            }
+            
+            if (attempt === RETRY_CONFIG.MAX_RETRIES) {
+                throw error;
+            }
+        }
+    }
+    
+    throw lastError || new Error('Max retries exceeded');
+}
+
+async function proxyToTelegram(request, requestInfo, attempt = 0, env = {}) {
+    const { botToken, apiMethod, path } = requestInfo;
+    
+    const endpointIndex = attempt % TELEGRAM_ENDPOINTS.length;
+    const endpoint = TELEGRAM_ENDPOINTS[endpointIndex];
+    
+    // 支持 TELEGRAM_API_BASE 环境变量覆盖（用于本地开发测试）
+    const telegramBase = env.TELEGRAM_API_BASE || `https://${endpoint}`;
+    const newUrl = new URL(path, telegramBase.replace(/\/+$/, '') + '/');
+    
+    const requestHeaders = new Headers(request.headers);
+    sanitizeHeaders(requestHeaders);
+    
+    requestHeaders.set('Connection', 'keep-alive');
+    requestHeaders.set('User-Agent', 'Cloudflare-Worker-Proxy/1.1');
+    requestHeaders.set('Cache-Control', 'no-cache');
+    requestHeaders.set('X-Forwarded-Proto', 'https');
+    
+    let requestBody;
+    let contentType = request.headers.get('content-type') || '';
+    
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+        try {
+            if (contentType.includes('multipart/form-data') || FILE_UPLOAD_METHODS.has(apiMethod)) {
+                const formData = await request.formData();
+                // 处理 setWebhook 方法，确保 proxy_url 正确设置
+                if (apiMethod === 'setWebhook' && formData.has('proxy_url')) {
+                    // 移除 proxy_url 参数，让 Telegram 直接使用我们的代理地址
+                    formData.delete('proxy_url');
+                }
+                requestBody = formData;
+                requestHeaders.delete('content-type');
+            } else {
+                // 处理 JSON 格式的 setWebhook 请求
+                if (apiMethod === 'setWebhook') {
+                    const bodyText = await request.text();
+                    try {
+                        const bodyJson = JSON.parse(bodyText);
+                        // 移除 proxy_url 参数
+                        if (bodyJson.proxy_url) {
+                            delete bodyJson.proxy_url;
+                        }
+                        requestBody = JSON.stringify(bodyJson);
+                        requestHeaders.set('Content-Type', 'application/json');
+                    } catch {
+                        // 如果不是有效的 JSON，直接使用原始请求体
+                        requestBody = bodyText;
+                        if (contentType) {
+                            requestHeaders.set('Content-Type', contentType);
+                        }
+                    }
+                } else {
+                    requestBody = await request.arrayBuffer();
+                    if (request.method === 'POST' && !contentType) {
+                        requestHeaders.set('Content-Type', 'application/json');
+                    } else if (contentType) {
+                        requestHeaders.set('Content-Type', contentType);
+                    }
+                }
+            }
+        } catch (error) {
+            throw new Error('Failed to read request body');
+        }
+    }
+    
+    const controller = new AbortController();
+    // 缩短超时：普通请求 15s，文件上传 60s — 避免长时间占用连接池
+    const timeoutDuration = FILE_UPLOAD_METHODS.has(apiMethod) ? 60000 : 15000;
+    const timeout = setTimeout(() => controller.abort(), timeoutDuration);
+    
+    try {
+        const newRequest = new Request(newUrl.toString(), {
+            method: request.method,
+            headers: requestHeaders,
+            body: requestBody,
+            redirect: 'follow',
+            signal: controller.signal
+        });
+        
+        const cacheConfig = CACHE_CONFIGS[apiMethod] || { ttl: 0, edge: false };
+        
+        const fetchTimeout = FILE_UPLOAD_METHODS.has(apiMethod) ? 100000 : 25000;
+        
+        const response = await fetch(newRequest, {
+            cf: {
+                cacheTtl: cacheConfig.ttl,
+                cacheEverything: cacheConfig.edge && request.method === 'GET',
+                polish: 'off',
+                minify: {
+                    javascript: false,
+                    css: false,
+                    html: false
+                },
+                timeout: fetchTimeout
+            }
+        });
+        
+        if (!response.ok && response.status >= 500) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+        
+        const responseHeaders = new Headers(response.headers);
+        addAdvancedSecurityHeaders(responseHeaders);
+        
+        const responseBody = await response.arrayBuffer();
+        
+        return new Response(responseBody, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: getCorsHeaders(responseHeaders)
+        });
+        
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function sanitizeHeaders(headers) {
+    const forbiddenHeaders = [
+        'cf-connecting-ip', 'cf-ipcountry', 'cf-ray', 'cf-visitor',
+        'x-forwarded-for', 'x-real-ip', 'x-forwarded-proto',
+        'host', 'origin', 'referer', 'cookie'
+        // 保留 authorization 头，用于转发 Telegram API 授权
+    ];
+    
+    forbiddenHeaders.forEach(header => headers.delete(header));
+    
+    for (const [key] of headers) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey.startsWith('cf-') || 
+            lowerKey.startsWith('x-') || 
+            lowerKey.startsWith('sec-') ||
+            lowerKey.includes('proxy')) {
+            headers.delete(key);
+        }
+    }
+    
+    return headers;
+}
+
+function addAdvancedSecurityHeaders(headers) {
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('X-Frame-Options', 'DENY');
+    headers.set('X-XSS-Protection', '1; mode=block');
+    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    headers.set('Content-Security-Policy', "default-src 'none'; script-src 'none'; object-src 'none'");
+    headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    headers.set('X-Permitted-Cross-Domain-Policies', 'none');
+    headers.set('X-Download-Options', 'noopen');
+    headers.set('X-DNS-Prefetch-Control', 'off');
+    headers.set('Feature-Policy', "geolocation 'none'; microphone 'none'; camera 'none'");
+}
+
+function getCorsHeaders(headers = new Headers()) {
+    const corsHeaders = new Headers(headers);
+    corsHeaders.set('Access-Control-Allow-Origin', '*');
+    corsHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    corsHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    corsHeaders.set('Access-Control-Expose-Headers', 'X-RateLimit-Remaining, X-RateLimit-Reset, X-Response-Time');
+    corsHeaders.set('Access-Control-Max-Age', '86400');
+    corsHeaders.set('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+    
+    return corsHeaders;
+}
+
+function handleCorsPreflightRequest() {
+    return new Response(null, {
+        status: 204,
+        headers: getCorsHeaders()
+    });
+}
+
+function createErrorResponse(message, status = 400) {
+    const errorType = errorTypeFromCode(status, message);
+    const headers = getCorsHeaders();
+    headers.set('Content-Type', 'application/json');
+    headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    
+    return new Response(JSON.stringify({ 
+        ok: false, 
+        error: message,
+        error_type: errorType,
+        error_code: status,
+        timestamp: new Date().toISOString(),
+        request_id: generateRequestId()
+    }), {
+        status,
+        headers
+    });
+}
+
+function createRateLimitResponse(retryAfter) {
+    const headers = getCorsHeaders();
+    headers.set('Content-Type', 'application/json');
+    headers.set('Retry-After', retryAfter.toString());
+    headers.set('X-RateLimit-Remaining', '0');
+    headers.set('X-RateLimit-Reset', (Date.now() + (retryAfter * 1000)).toString());
+    headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    
+    return new Response(JSON.stringify({ 
+        ok: false, 
+        error: 'Rate limit exceeded. Please try again later.',
+        error_type: 'rate_limited',
+        retry_after: retryAfter,
+        timestamp: new Date().toISOString(),
+        request_id: generateRequestId()
+    }), {
+        status: 429,
+        headers
+    });
+}
+
+function errorTypeFromCode(status, message) {
+    if (status === 401) return 'invalid_token';
+    if (status === 404) return 'not_found';
+    if (status === 405) return 'security_violation';
+    if (status === 429) return 'rate_limited';
+    if (status === 503) return 'circuit_breaker';
+    if (status === 504) return 'timeout';
+    const msg = (message || '').toLowerCase();
+    if (msg.includes('timeout') || msg.includes('abort')) return 'timeout';
+    if (msg.includes('exceeded_concurrent') || (msg.includes('connection') && msg.includes('limit'))) return 'connection_pool_full';
+    if (status >= 500) return 'proxy_error';
+    return 'proxy_error';
+}
+
+async function handleErrorResponse(response) {
+    const contentType = response.headers.get('content-type');
+    let body;
+    
+    try {
+        if (contentType && contentType.includes('application/json')) {
+            body = await response.json();
+        } else {
+            const text = await response.text();
+            body = {
+                ok: false,
+                error: `API Error (${response.status}): ${response.statusText}`,
+                details: text.substring(0, 500)
+            };
+        }
+    } catch (error) {
+        body = {
+            ok: false,
+            error: `API Error (${response.status}): ${response.statusText}`,
+            request_id: generateRequestId()
+        };
+    }
+    
+    body.error_type = body.error_type || errorTypeFromCode(response.status, body.error);
+    
+    const headers = getCorsHeaders();
+    headers.set('Content-Type', 'application/json');
+    
+    return new Response(JSON.stringify(body), {
+        status: response.status,
+        headers
+    });
+}
+
+function handleProxyError(error) {
+    const errorMessage = error.message || 'Unknown error occurred';
+    const isTimeout = error.name === 'AbortError' || errorMessage.includes('timeout');
+    const isConnPoolFull = errorMessage.includes('EXCEEDED_CONCURRENT') || (errorMessage.includes('Connection') && errorMessage.includes('limit'));
+    const status = isTimeout ? 504 : isConnPoolFull ? 503 : 500;
+    let errorType;
+    if (isTimeout) errorType = 'timeout';
+    else if (isConnPoolFull) errorType = 'connection_pool_full';
+    else errorType = 'proxy_error';
+    
+    const headers = getCorsHeaders();
+    headers.set('Content-Type', 'application/json');
+    
+    return new Response(JSON.stringify({ 
+        ok: false, 
+        error: isTimeout ? 'Gateway timeout' : isConnPoolFull ? 'Connection pool exhausted' : 'Proxy service temporarily unavailable',
+        error_type: errorType,
+        details: errorMessage.substring(0, 200),
+        timestamp: new Date().toISOString(),
+        request_id: generateRequestId()
+    }), {
+        status,
+        headers
+    });
+}
+
+function updateStats(startTime, success) {
+    const responseTime = Date.now() - startTime;
+    requestStats.total++;
+    
+    if (!success) {
+        requestStats.errors++;
+    }
+    
+    requestStats.avgResponseTime = requestStats.avgResponseTime === 0 
+        ? responseTime 
+        : (requestStats.avgResponseTime + responseTime) / 2;
+}
+
+function generateRequestId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+}
+export { onRequest as default };

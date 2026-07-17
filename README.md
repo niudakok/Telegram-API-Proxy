@@ -55,7 +55,7 @@
 
 | 对比项 | Worker 版 | Pages 版（推荐） |
 |--------|-----------|-----------------|
-| **入口** | `manual-worker/worker.js` | `functions/api/[[path]].js` |
+| **入口** | `manual-worker/worker.js` | `functions/api/api.js` |
 | **路由前缀** | `/bot<TOKEN>/<METHOD>` | `/api/bot<TOKEN>/<METHOD>` |
 | **部署方式** | 粘贴代码 / `wrangler deploy` | GitHub 关联自动部署 |
 | **安全防护** | 基础（全局限流 + Token 白名单） | 完整（IP/Token/突发三级限流 + 熔断器 + 可疑IP追踪） |
@@ -355,7 +355,7 @@ Telegram-API-Proxy/
 ├── manual-worker/
 │   └── worker.js              ← Worker 部署入口（含内嵌 ADMIN_HTML）
 ├── functions/api/
-│   └── [[path]].js            ← Pages Functions 部署入口（推荐）
+│   └── api.js            ← Pages Functions 部署入口（推荐）
 ├── admin.html                 ← 管理后台 HTML 源文件
 ├── index.html                 ← 主页介绍页面
 ├── css/style.css              ← 主页样式
