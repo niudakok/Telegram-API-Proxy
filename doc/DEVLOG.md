@@ -86,6 +86,39 @@ async function proxyFileFromTelegram(fileInfo, env) {
 main = "functions/api/api.js"
 ```
 
+### 问题 4: python-telegram-bot 库文件下载报 401 InvalidToken
+
+**现象:** xiaobei 可以正常收发文本消息，但收到图片时网关日志报 `telegram.error.InvalidToken: *** (401)`，图片无法下载。
+
+**根因:** 问题出在 `python-telegram-bot` 库的 `File._get_encoded_url()` 方法。当代理返回文件下载 URL 时，库会调用 `urllib.parse.quote()` 对 URL 路径做编码。`:` 字符不在 `quote()` 的默认 safe 字符集中，因此被编码为 `%3A`。
+
+具体链路：
+1. 代理返回 `file_path` 为 `photos/file_0.jpg`
+2. `python-telegram-bot` 库用 `base_file_url` 拼出完整 URL：`https://tgapi.indevs.in/file/bot<TOKEN>/photos/file_0.jpg`
+3. `download_as_bytearray()` 调用 `_get_encoded_url()` 对路径 URL 编码
+4. `:` 在 token 中被编码为 `%3A`，URL 变为 `https://tgapi.indevs.in/file/bot8722907968%3AAAG.../photos/file_0.jpg`
+5. 代理解析 `bot_token` 得到 `8722907968%3AAAG...`（含 `%3A`）
+6. `validateBotToken` 用 `8722907968%3AAAG...` 去匹配 `ALLOWED_BOT_TOKENS` 白名单
+7. 白名单中存的是原始 token `8722907968:AAG...`（含 `:`），匹配失败返回 401
+
+**修复代码位置:** `manual-worker/worker.js` 第 227 行
+```javascript
+function parseFileRequest(request) {
+    const url = new URL(request.url);
+    const match = url.pathname.match(FILE_PATH_REGEX);
+    if (!match) return { valid: false };
+    return {
+        valid: true,
+        botToken: decodeURIComponent(match.groups.bot_token),  // ← 添加 URL 解码
+        fileId: match.groups.file_id
+    };
+}
+```
+
+**修复原理:** 在 `parseFileRequest` 中对 `bot_token` 做 `decodeURIComponent()` 解码，将 `%3A` 还原为 `:`，确保白名单匹配正确。
+
+**验证结果:** 部署修复后，xiaobei 成功接收并下载图片，`InvalidToken` 错误消失。
+
 ---
 
 ## 🚀 部署指南
