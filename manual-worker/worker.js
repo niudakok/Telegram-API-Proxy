@@ -12,6 +12,7 @@ const RATE_LIMITS = {
 };
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
+const VERSION = { major: 7, minor: 1, patch: 0, build: '20260717', tag: 'dev' };
 
 let stats = {
     startTime: Date.now(),
@@ -41,6 +42,28 @@ async function handleRequest(request, env) {
 
     if (pathname === '/stats') {
         return handleStatsRequest();
+    }
+
+    // 测试端点：直接测试 Telegram API 连通性（绕过白名单验证）
+    if (pathname === '/ping') {
+        const testUrl = 'https://api.telegram.org/bot' + (env.ALLOWED_BOT_TOKENS ? env.ALLOWED_BOT_TOKENS.split(',')[0] : '123456:AAAA') + '/getMe';
+        let upStatus = 0;
+        try {
+            const resp = await fetch(testUrl, { method: 'GET', cf: { timeout: 10 } });
+            upStatus = resp.status;
+        } catch(e) {
+            upStatus = -1;
+        }
+        return new Response(JSON.stringify({
+            version: VERSION,
+            allowedTokensConfigured: !!env.ALLOWED_BOT_TOKENS,
+            testUrl,
+            upstreamStatus: upStatus,
+            telegramApiAccessible: upStatus !== -1
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
     }
 
     if (pathname === '' || pathname === '/') {
@@ -434,7 +457,7 @@ async function updateCloudflareEnv(key, value, env) {
 // ==========================================
 
 function handleStatsRequest() {
-    return new Response(JSON.stringify(stats), { headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ...stats, version: VERSION }), { headers: { 'content-type': 'application/json' } });
 }
 
 function handle404Request() {
@@ -564,7 +587,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">60267b7</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">8362194</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
@@ -613,6 +636,326 @@ const ADMIN_HTML = `
                 const item = document.createElement('div');
                 item.className = 'token-item';
                 item.innerHTML = \`<div><div class="token-text">\${maskToken(token)}</div><div class="token-meta">#\${idx + 1} · \${isValidToken(token) ? '格式正常' : '格式可能有误'}</div></div><button class="remove-btn" onclick="removeToken(\${idx})">删除</button>\`;
+                tokenListEl.appendChild(item);
+            });
+            syncTextarea();
+        }
+
+        function addToken() {
+            const input = document.getElementById('newToken');
+            const token = normalizeToken(input.value);
+            if (!token) return;
+            if (tokenList.includes(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = '该 Token 已存在，已自动忽略重复项。';
+                return;
+            }
+            if (!isValidToken(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = 'Token 格式看起来不正确（应类似 123456:ABC...），请确认后再添加。';
+                return;
+            }
+            badTokenMsg.style.display = 'none';
+            tokenList.push(token);
+            input.value = '';
+            renderTokens();
+        }
+
+        function removeToken(idx) {
+            tokenList.splice(idx, 1);
+            renderTokens();
+        }
+
+        function clearTokens() {
+            tokenList = [];
+            renderTokens();
+        }
+
+        function normalizeToken(token) { return token.trim(); }
+        function isValidToken(token) { return /^\\d{5,}:[\\w-]{10,}$/.test(token); }
+        function maskToken(token) {
+            const i = token.indexOf(':');
+            if (i < 0) return token;
+            const prefix = token.slice(0, i + 1);
+            const secret = token.slice(i + 1);
+            if (secret.length <= 8) return prefix + '********';
+            return prefix + secret.slice(0, 4) + '...' + secret.slice(-4);
+        }
+
+        function parseTokens(raw) {
+            return [...new Set(raw.split(',').map(normalizeToken).filter(Boolean))];
+        }
+
+        function syncTextarea() {
+            document.getElementById('tk').value = tokenList.join(',');
+        }
+
+        function renderTokens() {
+            tokenListEl.innerHTML = '';
+            if (!tokenList.length) {
+                tokenListEl.innerHTML = '<div class="empty">暂无 Token，请添加至少一个。</div>';
+                syncTextarea();
+                return;
+            }
+            tokenList.forEach((token, idx) => {
+                const item = document.createElement('div');
+                item.className = 'token-item';
+                item.innerHTML = \`<div><div class="token-text">\${maskToken(token)}</div><div class="token-meta">#\${idx + 1} · \${isValidToken(token) ? '格式正常' : '格式可能有误'}</div></div><button class="remove-btn" onclick="removeToken(\${idx})">删除</button>\`;
+                tokenListEl.appendChild(item);
+            });
+            syncTextarea();
+        }
+
+        function addToken() {
+            const input = document.getElementById('newToken');
+            const token = normalizeToken(input.value);
+            if (!token) return;
+            if (tokenList.includes(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = '该 Token 已存在，已自动忽略重复项。';
+                return;
+            }
+            if (!isValidToken(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = 'Token 格式看起来不正确（应类似 123456:ABC...），请确认后再添加。';
+                return;
+            }
+            badTokenMsg.style.display = 'none';
+            tokenList.push(token);
+            input.value = '';
+            renderTokens();
+        }
+
+        function removeToken(idx) {
+            tokenList.splice(idx, 1);
+            renderTokens();
+        }
+
+        function clearTokens() {
+            tokenList = [];
+            renderTokens();
+        }
+
+        async function load() {
+            const p = document.getElementById('pw').value;
+            if (!p) return show('请输入密码', true);
+            try {
+                const res = await fetch(apiPath, { headers: { 'Authorization': 'Bearer ' + p } });
+                if (res.ok) {
+                    const d = await res.json();
+                    tokenList = parseTokens(d.tokens || '');
+                    document.getElementById('editor').style.display = 'block';
+                    renderTokens();
+                    const conf = await fetch(settingsPath, { headers: { 'Authorization': 'Bearer ' + p } });
+                    if (conf.ok) {
+                        const sd = await conf.json();
+                        document.getElementById('stripProxyUrl').checked = sd.stripProxyUrl !== false;
+                    }
+                    show(\`连接成功，已加载 \${tokenList.length} 个 Token\`, false);
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    show(d.error || '认证失败，请检查密码', true);
+                }
+            } catch (e) {
+                show('网络错误，请确认服务已正确部署', true);
+            }
+        }
+
+        async function save() {
+            const p = document.getElementById('pw').value;
+            const t = document.getElementById('tk').value;
+            if (!tokenList.length) return show('请至少保留一个 Token 再保存', true);
+            try {
+                const res = await fetch(apiPath, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + p, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tokens: t })
+                });
+                if (res.ok) {
+                    const stripProxyUrl = document.getElementById('stripProxyUrl').checked;
+                    const sres = await fetch(settingsPath, {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + p, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stripProxyUrl })
+                    });
+                    if (!sres.ok) {
+                        const se = await sres.json().catch(() => ({}));
+                        return show(se.error || 'Token 已保存，但 setWebhook 设置保存失败', true);
+                    }
+                    show(\`保存成功！已提交 \${tokenList.length} 个 Token，约几秒后生效。\`, false);
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    show(d.error || '保存失败，请检查 API 权限配置', true);
+                }
+            } catch (e) {
+                show('网络错误', true);
+            }
+        }
+    </script>
+</body>
+
+</html>
+`;
+                tokenListEl.appendChild(item);
+            });
+            syncTextarea();
+        }
+
+        function addToken() {
+            const input = document.getElementById('newToken');
+            const token = normalizeToken(input.value);
+            if (!token) return;
+            if (tokenList.includes(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = '该 Token 已存在，已自动忽略重复项。';
+                return;
+            }
+            if (!isValidToken(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = 'Token 格式看起来不正确（应类似 123456:ABC...），请确认后再添加。';
+                return;
+            }
+            badTokenMsg.style.display = 'none';
+            tokenList.push(token);
+            input.value = '';
+            renderTokens();
+        }
+
+        function removeToken(idx) {
+            tokenList.splice(idx, 1);
+            renderTokens();
+        }
+
+        function clearTokens() {
+            tokenList = [];
+            renderTokens();
+        }
+
+        function normalizeToken(token) { return token.trim(); }
+        function isValidToken(token) { return /^\\d{5,}:[\\w-]{10,}$/.test(token); }
+        function maskToken(token) {
+            const i = token.indexOf(':');
+            if (i < 0) return token;
+            const prefix = token.slice(0, i + 1);
+            const secret = token.slice(i + 1);
+            if (secret.length <= 8) return prefix + '********';
+            return prefix + secret.slice(0, 4) + '...' + secret.slice(-4);
+        }
+
+        function parseTokens(raw) {
+            return [...new Set(raw.split(',').map(normalizeToken).filter(Boolean))];
+        }
+
+        function syncTextarea() {
+            document.getElementById('tk').value = tokenList.join(',');
+        }
+
+        function renderTokens() {
+            tokenListEl.innerHTML = '';
+            if (!tokenList.length) {
+                tokenListEl.innerHTML = '<div class="empty">暂无 Token，请添加至少一个。</div>';
+                syncTextarea();
+                return;
+            }
+            tokenList.forEach((token, idx) => {
+                const item = document.createElement('div');
+                item.className = 'token-item';
+                item.innerHTML = \`<div><div class="token-text">\${maskToken(token)}</div><div class="token-meta">#\${idx + 1} · \${isValidToken(token) ? '格式正常' : '格式可能有误'}</div></div><button class="remove-btn" onclick="removeToken(\${idx})">删除</button>\`;
+                tokenListEl.appendChild(item);
+            });
+            syncTextarea();
+        }
+
+        function addToken() {
+            const input = document.getElementById('newToken');
+            const token = normalizeToken(input.value);
+            if (!token) return;
+            if (tokenList.includes(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = '该 Token 已存在，已自动忽略重复项。';
+                return;
+            }
+            if (!isValidToken(token)) {
+                badTokenMsg.style.display = 'block';
+                badTokenMsg.innerText = 'Token 格式看起来不正确（应类似 123456:ABC...），请确认后再添加。';
+                return;
+            }
+            badTokenMsg.style.display = 'none';
+            tokenList.push(token);
+            input.value = '';
+            renderTokens();
+        }
+
+        function removeToken(idx) {
+            tokenList.splice(idx, 1);
+            renderTokens();
+        }
+
+        function clearTokens() {
+            tokenList = [];
+            renderTokens();
+        }
+
+        async function load() {
+            const p = document.getElementById('pw').value;
+            if (!p) return show('请输入密码', true);
+            try {
+                const res = await fetch(apiPath, { headers: { 'Authorization': 'Bearer ' + p } });
+                if (res.ok) {
+                    const d = await res.json();
+                    tokenList = parseTokens(d.tokens || '');
+                    document.getElementById('editor').style.display = 'block';
+                    renderTokens();
+                    const conf = await fetch(settingsPath, { headers: { 'Authorization': 'Bearer ' + p } });
+                    if (conf.ok) {
+                        const sd = await conf.json();
+                        document.getElementById('stripProxyUrl').checked = sd.stripProxyUrl !== false;
+                    }
+                    show(\`连接成功，已加载 \${tokenList.length} 个 Token\`, false);
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    show(d.error || '认证失败，请检查密码', true);
+                }
+            } catch (e) {
+                show('网络错误，请确认服务已正确部署', true);
+            }
+        }
+
+        async function save() {
+            const p = document.getElementById('pw').value;
+            const t = document.getElementById('tk').value;
+            if (!tokenList.length) return show('请至少保留一个 Token 再保存', true);
+            try {
+                const res = await fetch(apiPath, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + p, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tokens: t })
+                });
+                if (res.ok) {
+                    const stripProxyUrl = document.getElementById('stripProxyUrl').checked;
+                    const sres = await fetch(settingsPath, {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + p, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stripProxyUrl })
+                    });
+                    if (!sres.ok) {
+                        const se = await sres.json().catch(() => ({}));
+                        return show(se.error || 'Token 已保存，但 setWebhook 设置保存失败', true);
+                    }
+                    show(\`保存成功！已提交 \${tokenList.length} 个 Token，约几秒后生效。\`, false);
+                } else {
+                    const d = await res.json().catch(() => ({}));
+                    show(d.error || '保存失败，请检查 API 权限配置', true);
+                }
+            } catch (e) {
+                show('网络错误', true);
+            }
+        }
+    </script>
+</body>
+
+</html>
+`;
                 tokenListEl.appendChild(item);
             });
             syncTextarea();
