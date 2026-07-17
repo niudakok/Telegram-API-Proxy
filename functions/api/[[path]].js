@@ -107,7 +107,7 @@ function parseFileRequest(request) {
 
 async function proxyFileFromTelegram(fileInfo, env) {
     const baseUrl = getTelegramFileBaseUrl(env);
-    const fileUrl = `${baseUrl}${fileInfo.botToken}/${fileInfo.fileId}`;
+    const fileUrl = `${baseUrl}/${fileInfo.botToken}/${fileInfo.fileId}`;
     
     const headers = new Headers();
     headers.set('User-Agent', 'Cloudflare-Worker-Proxy/2.0');
@@ -134,7 +134,7 @@ async function proxyFileFromTelegram(fileInfo, env) {
 }
 
 function getTelegramFileBaseUrl(env) {
-    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '') + '/file/bot';
+    return (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '');
 }
 
 export async function onRequest(context) {
