@@ -1,7 +1,14 @@
 {
   "version": "7.1.0",
   "build": "20260717",
+  "tag": "dev",
   "changelog": [
+    "fix: parseFileRequest 对 bot_token 做 URL 解码，修复 python-telegram-bot 库编码 : 为 %3A 导致 token 白名单验证失败",
+    "fix: getTelegramFileBaseUrl 去掉重复的 /file/bot，修复文件下载双重路径",
+    "fix: sync-admin-html.mjs 用 lastIndexOf 替代 indexOf，修复 ADMIN_HTML 模板字符串被 admin.html 中 JS 的 `; 截断",
+    "fix: wrangler.toml main 指向 manual-worker/worker.js，修复 Pages Functions 格式不兼容 Worker 运行时导致的 HTTP 522",
+    "fix: sync-admin-html.mjs 删除重复的 const html 和 const next 声明",
+    "feat: 添加 VERSION 常量和 /ping 端点到 manual-worker/worker.js",
     "fix: URL_PATH_REGEX 用斜杠分隔 token 和 method（正确格式）",
     "fix: sanitizeHeaders 保留 authorization 头以正常转发 Telegram 授权"
   ]
