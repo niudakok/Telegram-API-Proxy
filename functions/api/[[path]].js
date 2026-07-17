@@ -212,6 +212,28 @@ export async function onRequest(context) {
         });
     }
 
+    // 测试端点：直接测试 Telegram API 连通性（绕过白名单验证）
+    if (rawPathName.endsWith('/ping')) {
+        const testUrl = 'https://api.telegram.org/bot' + (env.ALLOWED_BOT_TOKENS ? env.ALLOWED_BOT_TOKENS.split(',')[0] : '123456:AAAA') + '/getMe';
+        let upStatus = 0;
+        try {
+            const resp = await fetch(testUrl, { method: 'GET', cf: { timeout: 10 } });
+            upStatus = resp.status;
+        } catch(e) {
+            upStatus = -1;
+        }
+        return new Response(JSON.stringify({
+            version: VERSION,
+            allowedTokensConfigured: !!env.ALLOWED_BOT_TOKENS,
+            testUrl,
+            upstreamStatus: upStatus,
+            telegramApiAccessible: upStatus !== -1
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        });
+    }
+
     const requestInfo = await parseRequest(request);
         if (!requestInfo.valid) {
             return createErrorResponse('Invalid request format', 400);
