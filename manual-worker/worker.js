@@ -424,30 +424,56 @@ async function updateCloudflareEnv(key, value, env) {
         return { success: false, error: '未配置 CF_ACCOUNT_ID/CF_SCRIPT_NAME/CF_API_TOKEN' };
     }
 
-    try {
-        // 尝试使用 Secrets API 进行更新，这样既可以更新普通变量也可以更新 Secret，且不干扰其他绑定
-        const url = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}/secrets`;
-        const res = await fetch(url, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${apiTok}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                name: key,
-                text: value,
-                type: 'secret_text'
-            })
-        });
+    const headers = {
+        'Authorization': `Bearer ${apiTok}`,
+        'Content-Type': 'application/json'
+    };
+    const base = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}`;
 
-        const data = await res.json();
-        if (data.success) {
-            return { success: true };
-        } else {
-            const err = data.errors?.[0]?.message || '更新失败';
-            // 如果 Secrets API 不适用（例如脚本不存在或其他原因），返回详细错误
-            return { success: false, error: `CF API 报错: ${err}` };
+    try {
+        // 优先尝试 Versions API（适用于未部署状态）
+        const verRes = await fetch(`${base}/versions`, { method: 'GET', headers });
+        const verData = verRes.ok ? await verRes.json().catch(() => ({})) : {};
+        const versions = Array.isArray(verData?.result) ? verData.result : [];
+
+        if (verRes.ok && versions.length > 0) {
+            // 创建新版本 + 写入 secret
+            const createRes = await fetch(`${base}/versions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ secrets: [{ name: key, text: value }] })
+            });
+            const createData = createRes.ok ? await createRes.json().catch(() => ({})) : {};
+            if (createRes.ok && createData?.result?.id) {
+                // 部署到生产
+                const deployRes = await fetch(`${base}/deployments`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ version_id: createData.result.id })
+                });
+                if (deployRes.ok) {
+                    return { success: true };
+                }
+            }
         }
+
+        // Fallback: 旧版 Secrets API（已部署的 Worker 可用）
+        const secretsRes = await fetch(`${base}/secrets`, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({ name: key, text: value, type: 'secret_text' })
+        });
+        const secretsData = secretsRes.ok ? await secretsRes.json().catch(() => ({})) : {};
+
+        if (secretsRes.ok && secretsData.success) {
+            return { success: true };
+        }
+
+        // 所有方法都失败，返回最具体的错误
+        const fallbackErr = verData.errors?.[0]?.message
+            || secretsData.errors?.[0]?.message
+            || (secretsRes.ok ? 'Cloudflare API 返回成功但格式异常' : `CF API 错误 (${secretsRes.status}): ${secretsRes.statusText}`);
+        return { success: false, error: fallbackErr };
     } catch (e) {
         return { success: false, error: '网络或系统异常: ' + e.message };
     }
@@ -588,7 +614,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">99ce6b5</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">db31ba4</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
