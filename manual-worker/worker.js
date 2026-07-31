@@ -424,69 +424,56 @@ async function updateCloudflareEnv(key, value, env) {
         return { success: false, error: '未配置 CF_ACCOUNT_ID/CF_SCRIPT_NAME/CF_API_TOKEN' };
     }
 
+    const headers = {
+        'Authorization': `Bearer ${apiTok}`,
+        'Content-Type': 'application/json'
+    };
     const base = `https://api.cloudflare.com/client/v4/accounts/${accId}/workers/scripts/${scName}`;
 
     try {
-        // Step 1: 获取当前脚本版本列表
-        const verListUrl = `${base}/versions`;
-        const verListRes = await fetch(verListUrl, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${apiTok}` }
+        // 优先尝试 Versions API（适用于未部署状态）
+        const verRes = await fetch(`${base}/versions`, { method: 'GET', headers });
+        const verData = verRes.ok ? await verRes.json().catch(() => ({})) : {};
+        const versions = Array.isArray(verData?.result) ? verData.result : [];
+
+        if (verRes.ok && versions.length > 0) {
+            // 创建新版本 + 写入 secret
+            const createRes = await fetch(`${base}/versions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ secrets: [{ name: key, text: value }] })
+            });
+            const createData = createRes.ok ? await createRes.json().catch(() => ({})) : {};
+            if (createRes.ok && createData?.result?.id) {
+                // 部署到生产
+                const deployRes = await fetch(`${base}/deployments`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ version_id: createData.result.id })
+                });
+                if (deployRes.ok) {
+                    return { success: true };
+                }
+            }
+        }
+
+        // Fallback: 旧版 Secrets API（已部署的 Worker 可用）
+        const secretsRes = await fetch(`${base}/secrets`, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({ name: key, text: value, type: 'secret_text' })
         });
-        if (!verListRes.ok) {
-            const d = await verListRes.json().catch(() => ({}));
-            return { success: false, error: `获取 Worker 版本失败 (${verListRes.status}): ${d.errors?.[0]?.message || verListRes.statusText}` };
-        }
-        const verListData = await verListRes.json();
-        if (!verListData.success || !verListData.result?.length) {
-            return { success: false, error: '未找到 Worker 版本记录，请先在 Cloudflare 面板部署一次' };
+        const secretsData = secretsRes.ok ? await secretsRes.json().catch(() => ({})) : {};
+
+        if (secretsRes.ok && secretsData.success) {
+            return { success: true };
         }
 
-        // 取最新的生产版本（按 created_on 排序）
-        const versions = verListData.result.sort((a, b) => (a.created_on || '').localeCompare(b.created_on || ''));
-        const latestVersion = versions[versions.length - 1];
-        const prodVerId = latestVersion.id;
-
-        // Step 2: 创建新版本，设置密钥
-        const createUrl = `${base}/versions`;
-        const createRes = await fetch(createUrl, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiTok}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                secrets: [{ name: key, text: value }]
-            })
-        });
-        if (!createRes.ok) {
-            const d = await createRes.json().catch(() => ({}));
-            return { success: false, error: `创建新版本失败 (${createRes.status}): ${d.errors?.[0]?.message || createRes.statusText}` };
-        }
-        const createData = await createRes.json();
-        if (!createData.success || !createData.result?.id) {
-            return { success: false, error: '创建新版本失败，Cloudflare 未返回有效 ID' };
-        }
-        const newVerId = createData.result.id;
-
-        // Step 3: 部署新版本到生产
-        const deployUrl = `${base}/deployments`;
-        const deployRes = await fetch(deployUrl, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiTok}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                version_id: newVerId
-            })
-        });
-        if (!deployRes.ok) {
-            const d = await deployRes.json().catch(() => ({}));
-            return { success: false, error: `部署版本失败 (${deployRes.status}): ${d.errors?.[0]?.message || deployRes.statusText}` };
-        }
-
-        return { success: true };
+        // 所有方法都失败，返回最具体的错误
+        const fallbackErr = verData.errors?.[0]?.message
+            || secretsData.errors?.[0]?.message
+            || (secretsRes.ok ? 'Cloudflare API 返回成功但格式异常' : `CF API 错误 (${secretsRes.status}): ${secretsRes.statusText}`);
+        return { success: false, error: fallbackErr };
     } catch (e) {
         return { success: false, error: '网络或系统异常: ' + e.message };
     }
@@ -627,7 +614,7 @@ const ADMIN_HTML = `
             <button onclick="save()">保存并应用</button>
         </div>
         <div id="msg"></div>
-        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">cc9d189</code></div>
+        <div class="help-text" style="margin-top:10px; text-align:right;">版本: <code id="buildVersion">db31ba4</code></div>
     </div>
     <script>
         const msg = document.getElementById('msg');
